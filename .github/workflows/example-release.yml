@@ -74,9 +74,9 @@ jobs:
           promotion-strategy: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['promotion-strategy'] || 'gradual' }}
           gradual-steps: '10,50,100'
           gradual-step-wait-seconds: '30'
-          smoke-test-url: https://example.com
+          smoke-test-url: ${{ vars.CF_PRODUCTION_SMOKE_URL }}
           smoke-test-expected-status: '200'
-          smoke-test-expected-body-contains: 'Example Domain'
+          smoke-test-expected-body-contains: ${{ vars.CF_SMOKE_EXPECTED_BODY || 'Example Domain' }}
           smoke-test-command: "node -e \"console.log('smoke command ok')\""
           smoke-test-retries: '3'
           smoke-test-retry-interval: '2000'
