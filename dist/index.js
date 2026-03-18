@@ -33172,7 +33172,7 @@ async function run() {
         // ── 1. Parse Inputs ──
         core.info('');
         core.info('='.repeat(50));
-        core.info('  Workers Release Promoter v1.0.0');
+        core.info('  Workers Release Promoter');
         core.info('='.repeat(50));
         core.info('');
         const inputs = (0, inputs_1.getInputs)();

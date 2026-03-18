@@ -30,7 +30,7 @@ async function run(): Promise<void> {
     // ── 1. Parse Inputs ──
     core.info('');
     core.info('='.repeat(50));
-    core.info('  Workers Release Promoter v1.0.0');
+    core.info('  Workers Release Promoter');
     core.info('='.repeat(50));
     core.info('');
 
