@@ -32537,7 +32537,7 @@ async function execWrangler(args, inputs, options) {
         CLOUDFLARE_ACCOUNT_ID: inputs.auth.accountId,
     };
     const safeArgs = args.map((a) => a.includes(inputs.auth.apiToken) ? '***' : a);
-    core.info(`🔧 Running: wrangler ${safeArgs.join(' ')}`);
+    core.info(`[wrangler] Running: wrangler ${safeArgs.join(' ')}`);
     try {
         const result = await execa('npx', ['wrangler', ...args], {
             cwd,
@@ -32546,9 +32546,9 @@ async function execWrangler(args, inputs, options) {
             timeout: 300_000, // 5 minute timeout
         });
         if (result.exitCode !== 0) {
-            core.warning(`Wrangler exited with code ${result.exitCode}`);
-            core.debug(`stdout: ${result.stdout}`);
-            core.debug(`stderr: ${result.stderr}`);
+            core.warning(`[wrangler] Exited with code ${result.exitCode}`);
+            core.debug(`[wrangler] stdout: ${result.stdout}`);
+            core.debug(`[wrangler] stderr: ${result.stderr}`);
         }
         return result;
     }
@@ -32560,13 +32560,13 @@ async function execWrangler(args, inputs, options) {
  * Ensure Wrangler is available in the path.
  */
 async function ensureWrangler(inputs) {
-    core.info('🔍 Checking Wrangler availability…');
+    core.info('[wrangler] Checking Wrangler availability');
     try {
         const result = await execWrangler(['--version'], inputs);
         if (result.exitCode !== 0) {
             throw new Error(result.stderr || 'Unknown error');
         }
-        core.info(`✅ Wrangler found: ${result.stdout.trim()}`);
+        core.info(`[wrangler] Found: ${result.stdout.trim()}`);
     }
     catch (err) {
         if (err instanceof types_1.ActionError)
@@ -32582,7 +32582,7 @@ async function ensureWrangler(inputs) {
  * git context, and parsed staging/production URLs.
  */
 async function deployCandidate(inputs, releaseContext) {
-    core.info('🚀 Deploying candidate Worker version…');
+    core.info('[deploy] Deploying candidate Worker version');
     const args = ['deploy'];
     if (inputs.workerName) {
         args.push('--name', inputs.workerName);
@@ -32630,7 +32630,7 @@ async function deployCandidate(inputs, releaseContext) {
  * Returns the version ID for subsequent gradual promotion.
  */
 async function uploadVersion(inputs) {
-    core.info('📤 Uploading new Worker version (without deploying)…');
+    core.info('[deploy] Uploading new Worker version (without deploying)');
     const args = ['versions', 'upload'];
     if (inputs.workerName) {
         args.push('--name', inputs.workerName);
@@ -32644,7 +32644,7 @@ async function uploadVersion(inputs) {
     if (!versionMatch?.[1]) {
         throw new types_1.ActionError(types_1.ErrorCode.DEPLOY_OUTPUT_PARSE_FAILED, 'Could not parse version ID from wrangler versions upload output.');
     }
-    core.info(`✅ Version uploaded: ${versionMatch[1]}`);
+    core.info(`[deploy] Version uploaded: ${versionMatch[1]}`);
     return versionMatch[1];
 }
 /**
@@ -32652,23 +32652,23 @@ async function uploadVersion(inputs) {
  * Returns the version ID or undefined if no active version exists.
  */
 async function lookupCurrentStableVersion(inputs) {
-    core.info('🔍 Looking up current stable Worker version…');
+    core.info('[deploy] Looking up current stable Worker version');
     const args = ['versions', 'list'];
     if (inputs.workerName) {
         args.push('--name', inputs.workerName);
     }
     const result = await execWrangler(args, inputs);
     if (result.exitCode !== 0) {
-        core.warning('Could not look up current stable version — proceeding without rollback target.');
+        core.warning('[deploy] Could not look up current stable version -- proceeding without rollback target');
         return undefined;
     }
     // Parse the first (most recent active) version from the output
     const versionMatch = result.stdout.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/);
     if (versionMatch?.[1]) {
-        core.info(`✅ Current stable version: ${versionMatch[1]}`);
+        core.info(`[deploy] Current stable version: ${versionMatch[1]}`);
         return versionMatch[1];
     }
-    core.info('ℹ️  No existing stable version found (first deployment?).');
+    core.info('[deploy] No existing stable version found (first deployment?)');
     return undefined;
 }
 /**
@@ -32676,9 +32676,9 @@ async function lookupCurrentStableVersion(inputs) {
  * Uses `wrangler versions deploy` for gradual rollout.
  */
 async function promoteVersion(versionId, percentage, inputs, previousVersionId) {
-    core.info(`📈 Promoting version ${versionId} to ${percentage}% traffic…`);
+    core.info(`[promote] Promoting version ${versionId} to ${percentage}% traffic`);
     if (percentage === 100) {
-        // Full promotion — use wrangler versions deploy with 100%
+        // Full promotion -- use wrangler versions deploy with 100%
         const args = [
             'versions',
             'deploy',
@@ -32698,9 +32698,9 @@ async function promoteVersion(versionId, percentage, inputs, previousVersionId) 
                 : `Promotion failed: ${result.stderr || result.stdout}`,
         };
     }
-    // Gradual promotion — split traffic between old and new
+    // Gradual promotion -- split traffic between old and new
     if (!previousVersionId) {
-        core.warning('No previous version for gradual split — promoting new version directly.');
+        core.warning('[promote] No previous version for gradual split -- promoting new version directly');
         const args = [
             'versions',
             'deploy',
@@ -32743,14 +32743,14 @@ async function promoteVersion(versionId, percentage, inputs, previousVersionId) 
  * Rollback to a previously known stable version.
  */
 async function rollbackToVersion(versionId, inputs) {
-    core.info(`⏪ Rolling back to version ${versionId}…`);
+    core.info(`[rollback] Rolling back to version ${versionId}`);
     const args = ['versions', 'deploy', `${versionId}@100%`, '--yes'];
     if (inputs.workerName) {
         args.push('--name', inputs.workerName);
     }
     const result = await execWrangler(args, inputs);
     if (result.exitCode === 0) {
-        core.info(`✅ Successfully rolled back to version ${versionId}`);
+        core.info(`[rollback] Successfully rolled back to version ${versionId}`);
         return {
             success: true,
             rolledBackToVersionId: versionId,
@@ -32759,7 +32759,7 @@ async function rollbackToVersion(versionId, inputs) {
             stderr: result.stderr,
         };
     }
-    core.error(`❌ Rollback failed: ${result.stderr || result.stdout}`);
+    core.error(`[rollback] Rollback failed: ${result.stderr || result.stdout}`);
     return {
         success: false,
         rolledBackToVersionId: versionId,
@@ -32859,7 +32859,7 @@ const types_1 = __nccwpck_require__(8522);
 function resolveReleaseContext() {
     const { context } = github;
     const { eventName, payload } = context;
-    core.info(`📋 Resolving release context from event: ${eventName}`);
+    core.info(`[github] Resolving release context from event: ${eventName}`);
     if (eventName === 'release' && payload.release) {
         const release = payload.release;
         return {
@@ -32901,11 +32901,11 @@ function resolveReleaseContext() {
  */
 async function updateReleaseBody(releaseContext, section, githubToken) {
     if (!githubToken) {
-        core.warning('No GitHub token provided — skipping release notes update.');
+        core.warning('No GitHub token provided -- skipping release notes update.');
         return;
     }
     if (releaseContext.id === 0) {
-        core.info('ℹ️  Skipping release notes update (no GitHub Release associated).');
+        core.info('[github] Skipping release notes update (no GitHub Release associated)');
         return;
     }
     try {
@@ -32931,7 +32931,7 @@ async function updateReleaseBody(releaseContext, section, githubToken) {
             release_id: releaseContext.id,
             body: updatedBody,
         });
-        core.info('✅ Release notes updated with deployment information');
+        core.info('[github] Release notes updated with deployment information');
     }
     catch (err) {
         core.warning(`Failed to update release notes: ${err instanceof Error ? err.message : String(err)}`);
@@ -32942,7 +32942,7 @@ async function updateReleaseBody(releaseContext, section, githubToken) {
  */
 async function createDeploymentStatus(releaseContext, state, environmentName, deploymentUrl, githubToken) {
     if (!githubToken) {
-        core.warning('No GitHub token provided — skipping deployment status.');
+        core.warning('No GitHub token provided -- skipping deployment status.');
         return;
     }
     try {
@@ -32967,7 +32967,7 @@ async function createDeploymentStatus(releaseContext, state, environmentName, de
                 environment_url: deploymentUrl,
                 description: `Cloudflare Workers ${state}`,
             });
-            core.info(`✅ GitHub deployment status created: ${state}`);
+            core.info(`[github] Deployment status created: ${state}`);
         }
     }
     catch (err) {
@@ -32977,26 +32977,54 @@ async function createDeploymentStatus(releaseContext, state, environmentName, de
 // ─── Internal Helpers ────────────────────────────────────
 function buildDeploymentMarkdown(section) {
     const lines = [];
-    lines.push('### 🚀 Cloudflare Workers Deployment');
+    lines.push('### Cloudflare Workers Deployment');
     lines.push('');
     lines.push(`| Field | Value |`);
     lines.push(`| ----- | ----- |`);
     lines.push(`| **Environment** | \`${section.environment}\` |`);
-    lines.push(`| **Result** | ${section.promotionResult === 'success' ? '✅ Success' : section.promotionResult === 'rolled-back' ? '⚠️ Rolled back' : '❌ Failed'} |`);
+    const resultLabel = section.promotionResult === 'success'
+        ? 'Success'
+        : section.promotionResult === 'staging-only'
+            ? 'Staging-Only'
+            : section.promotionResult === 'rolled-back'
+                ? 'Rolled Back'
+                : 'Failed';
+    lines.push(`| **Result** | ${resultLabel} |`);
+    if (section.promotionStrategy) {
+        lines.push(`| **Strategy** | \`${section.promotionStrategy}\` |`);
+    }
+    if (section.releaseTag) {
+        lines.push(`| **Release** | \`${section.releaseTag}\` |`);
+    }
     if (section.deploymentId) {
         lines.push(`| **Deployment ID** | \`${section.deploymentId}\` |`);
     }
     if (section.versionId) {
         lines.push(`| **Version ID** | \`${section.versionId}\` |`);
     }
-    if (section.url) {
+    if (section.stagingUrl) {
+        lines.push(`| **Staging URL** | ${section.stagingUrl} |`);
+    }
+    if (section.productionUrl) {
+        lines.push(`| **Production URL** | ${section.productionUrl} |`);
+    }
+    else if (section.url) {
         lines.push(`| **URL** | ${section.url} |`);
     }
+    if (section.gitSha) {
+        lines.push(`| **Git SHA** | \`${section.gitSha.substring(0, 12)}\` |`);
+    }
     if (section.smokeTestPassed !== undefined) {
-        lines.push(`| **Smoke Test** | ${section.smokeTestPassed ? '✅ Passed' : '❌ Failed'} |`);
+        lines.push(`| **Smoke Test** | ${section.smokeTestPassed ? 'Passed' : 'Failed'} |`);
     }
     if (section.rollbackTriggered) {
-        lines.push(`| **Rollback** | ⚠️ Triggered |`);
+        lines.push(`| **Rollback** | Triggered |`);
+        if (section.rollbackVersionId) {
+            lines.push(`| **Rollback Version** | \`${section.rollbackVersionId}\` |`);
+        }
+    }
+    if (section.previousStableVersionId) {
+        lines.push(`| **Previous Stable** | \`${section.previousStableVersionId}\` |`);
     }
     if (section.rolloutSteps) {
         lines.push(`| **Rollout** | ${section.rolloutSteps} |`);
@@ -33067,8 +33095,8 @@ const types_1 = __nccwpck_require__(8522);
  *  1. Parse + validate inputs
  *  2. Resolve release context from GitHub event
  *  3. Validate Cloudflare/Wrangler environment
- *  4. If dry-run → validate & print plan, exit
- *  5. Execute promotion flow (deploy → smoke → promote → rollback if needed)
+ *  4. If dry-run -> validate & print plan, exit
+ *  5. Execute promotion flow (deploy -> smoke -> promote -> rollback if needed)
  *  6. Annotate release page with deployment info
  *  7. Set outputs & write job summary
  */
@@ -33077,36 +33105,39 @@ async function run() {
     try {
         // ── 1. Parse Inputs ──
         core.info('');
-        core.info('╔═══════════════════════════════════════════╗');
-        core.info('║   Workers Release Promoter v1.0.0        ║');
-        core.info('╚═══════════════════════════════════════════╝');
+        core.info('='.repeat(50));
+        core.info('  Workers Release Promoter v1.0.0');
+        core.info('='.repeat(50));
         core.info('');
         const inputs = (0, inputs_1.getInputs)();
         // ── 2. Resolve Release Context ──
         const releaseContext = (0, github_1.resolveReleaseContext)();
-        core.info(`📦 Release: ${releaseContext.tagName} — ${releaseContext.name}`);
+        core.info(`[release] Tag: ${releaseContext.tagName} -- ${releaseContext.name}`);
         if (releaseContext.prerelease) {
-            core.info('⚠️  This is a pre-release.');
+            core.notice('This is a pre-release.');
         }
         // ── 3. Validate Wrangler ──
         await (0, cloudflare_1.ensureWrangler)(inputs);
         // ── 4. Dry Run ──
         if (inputs.dryRun) {
             core.info('');
-            core.info('═══════════════════════════════════════════');
-            core.info('  DRY RUN — Validation Only');
-            core.info('═══════════════════════════════════════════');
+            core.info('='.repeat(50));
+            core.info('  DRY RUN -- Validation Only');
+            core.info('='.repeat(50));
             core.info('');
             const plan = (0, promotion_1.buildPromotionPlan)(inputs);
-            core.info('✅ Inputs validated successfully');
-            core.info(`✅ Release context resolved: ${releaseContext.tagName}`);
-            core.info(`✅ Wrangler is available`);
-            core.info(`✅ Worker: ${inputs.workerName || '(from config)'}`);
-            core.info(`✅ Environment: ${inputs.environment}`);
-            core.info(`✅ Rollout plan: ${plan.steps.join('% → ')}%`);
-            core.info(`✅ Smoke tests: ${plan.smokeTestEnabled ? 'enabled' : 'disabled'}`);
+            core.info('[ok] Inputs validated successfully');
+            core.info(`[ok] Release context resolved: ${releaseContext.tagName}`);
+            core.info('[ok] Wrangler is available');
+            core.info(`[ok] Worker: ${inputs.workerName || '(from config)'}`);
+            core.info(`[ok] Environment: ${inputs.environment}`);
+            core.info(`[ok] Strategy: ${inputs.promotionStrategy}`);
+            if (plan.steps.length > 0) {
+                core.info(`[ok] Rollout plan: ${plan.steps.map(s => `${s.percent}%`).join(' -> ')}`);
+            }
+            core.info(`[ok] Smoke tests: ${plan.smokeTestEnabled ? 'enabled' : 'disabled'}`);
             core.info('');
-            core.info('🔍 Dry run complete — no deployments were made.');
+            core.notice('Dry run complete -- no deployments were made');
             // Set outputs for dry run
             core.setOutput('release-tag', releaseContext.tagName);
             core.setOutput('release-id', String(releaseContext.id));
@@ -33128,8 +33159,11 @@ async function run() {
         // ── 6. Execute Promotion ──
         const plan = (0, promotion_1.buildPromotionPlan)(inputs);
         core.info('');
-        core.info(`📋 Promotion plan: ${plan.steps.join('% → ')}%`);
-        core.info(`   Smoke tests: ${plan.smokeTestEnabled ? '✅ enabled' : '⏭️  disabled'}`);
+        core.info(`[plan] Strategy: ${plan.strategy}`);
+        if (plan.steps.length > 0) {
+            core.info(`[plan] Steps: ${plan.steps.map(s => `${s.percent}%`).join(' -> ')}`);
+        }
+        core.info(`[plan] Smoke tests: ${plan.smokeTestEnabled ? 'enabled' : 'disabled'}`);
         core.info('');
         const result = await (0, promotion_1.executePromotion)(inputs, plan, releaseContext);
         // ── 7. Set Outputs ──
@@ -33150,14 +33184,25 @@ async function run() {
         // Promotion status
         const promotionStatus = result.state === 'complete'
             ? 'success'
-            : result.state === 'rolled-back'
-                ? 'rolled-back'
-                : 'failed';
+            : result.state === 'staging-only'
+                ? 'staging-only'
+                : result.state === 'rolled-back'
+                    ? 'rolled-back'
+                    : 'failed';
         core.setOutput('promotion-result', promotionStatus);
         core.setOutput('promotion-status', promotionStatus);
-        // Determine smoke test output
+        // Smoke test status
         let smokeTestPassed = '';
         let smokeTestStatus = 'skipped';
+        if (result.candidateSmokeResult) {
+            smokeTestPassed = String(result.candidateSmokeResult.passed);
+            smokeTestStatus = result.candidateSmokeResult.passed ? 'passed' : 'failed';
+        }
+        if (result.postPromotionSmokeResult) {
+            smokeTestPassed = String(result.postPromotionSmokeResult.passed);
+            smokeTestStatus = result.postPromotionSmokeResult.passed ? 'passed' : 'failed';
+        }
+        // Also check step-level smoke results
         for (const step of result.stepResults) {
             if (step.smokeTest) {
                 smokeTestPassed = String(step.smokeTest.passed);
@@ -33172,27 +33217,33 @@ async function run() {
         const notesSection = (0, releaseNotes_1.buildReleaseNotesSection)(result, inputs.environment, inputs.rolloutSteps);
         await (0, github_1.updateReleaseBody)(releaseContext, notesSection, inputs.githubToken);
         // ── 9. Update GitHub Deployment Status ──
-        const deployState = result.state === 'complete' ? 'success' : 'failure';
+        const deployState = result.state === 'complete' || result.state === 'staging-only'
+            ? 'success'
+            : 'failure';
         await (0, github_1.createDeploymentStatus)(releaseContext, deployState, inputs.environment, result.deploy?.url, inputs.githubToken);
         // ── 10. Write Job Summary ──
-        const summary = (0, releaseNotes_1.buildJobSummary)(result, inputs.environment, releaseContext.tagName);
+        const summary = (0, releaseNotes_1.buildJobSummary)(result, inputs.environment, releaseContext.tagName, inputs.promotionStrategy);
         await core.summary.addRaw(summary).write();
         // ── 11. Final Status ──
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         core.info('');
-        core.info('═══════════════════════════════════════════');
+        core.info('='.repeat(50));
         if (result.state === 'complete') {
-            core.info(`  ✅ Promotion complete in ${elapsed}s`);
-            core.info('═══════════════════════════════════════════');
+            core.info(`  [success] Promotion complete in ${elapsed}s`);
+            core.info('='.repeat(50));
+        }
+        else if (result.state === 'staging-only') {
+            core.info(`  [staging-only] Candidate deployed and verified in ${elapsed}s`);
+            core.info('='.repeat(50));
         }
         else if (result.state === 'rolled-back') {
-            core.info(`  ⚠️  Promotion rolled back after ${elapsed}s`);
-            core.info('═══════════════════════════════════════════');
+            core.info(`  [rolled-back] Promotion rolled back after ${elapsed}s`);
+            core.info('='.repeat(50));
             core.setFailed(`Deployment rolled back: ${result.error || 'Unknown error'}`);
         }
         else {
-            core.info(`  ❌ Promotion failed after ${elapsed}s`);
-            core.info('═══════════════════════════════════════════');
+            core.info(`  [failed] Promotion failed after ${elapsed}s`);
+            core.info('='.repeat(50));
             core.setFailed(`Deployment failed: ${result.error || 'Unknown error'}`);
         }
     }
@@ -33206,7 +33257,7 @@ async function run() {
             core.error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
             core.setFailed(err instanceof Error ? err.message : String(err));
         }
-        core.info(`⏱️  Failed after ${elapsed}s`);
+        core.info(`[timing] Failed after ${elapsed}s`);
     }
 }
 // Run the action
@@ -33278,38 +33329,74 @@ function resolveAuth() {
     if (!accountId) {
         throw new types_1.ActionError(types_1.ErrorCode.MISSING_ACCOUNT_ID, 'Cloudflare account ID is required. Provide it via the "cloudflare-account-id" input or the CLOUDFLARE_ACCOUNT_ID environment variable.');
     }
-    // Mask secrets so they never appear in logs
     (0, utils_1.maskSecret)(apiToken);
     (0, utils_1.maskSecret)(accountId);
     return { apiToken, accountId };
 }
 /**
  * Resolve smoke test configuration from inputs.
- * Returns undefined if no smoke-test-url is provided (smoke testing disabled).
+ * Returns undefined if no smoke-test-url is provided and no custom command.
  */
 function resolveSmokeTest() {
     const url = core.getInput('smoke-test-url', { required: false });
-    if (!url)
+    const customCommand = core.getInput('smoke-test-command', { required: false }) || undefined;
+    const requiredInput = core.getInput('smoke-test-required', { required: false }) || 'true';
+    const required = requiredInput.toLowerCase() !== 'false';
+    if (!url && !customCommand)
         return undefined;
-    const expectedStatus = parseInt(core.getInput('smoke-test-expected-status') || '200', 10);
-    if (isNaN(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) {
-        throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, `Invalid smoke-test-expected-status: must be a valid HTTP status code (100-599).`);
-    }
-    const expectedBodyContains = core.getInput('smoke-test-expected-body-contains', { required: false }) || undefined;
-    const timeoutMs = parseInt(core.getInput('smoke-test-timeout') || '10000', 10);
-    if (isNaN(timeoutMs) || timeoutMs < 1000) {
-        throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, 'Invalid smoke-test-timeout: must be at least 1000 (1 second).');
+    const checks = [];
+    if (url) {
+        const expectedStatus = parseInt(core.getInput('smoke-test-expected-status') || '200', 10);
+        if (isNaN(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) {
+            throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, 'Invalid smoke-test-expected-status: must be a valid HTTP status code (100-599).');
+        }
+        const expectedBodyIncludes = core.getInput('smoke-test-expected-body-contains', { required: false }) || undefined;
+        const timeoutMs = parseInt(core.getInput('smoke-test-timeout') || '10000', 10);
+        if (isNaN(timeoutMs) || timeoutMs < 1000) {
+            throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, 'Invalid smoke-test-timeout: must be at least 1000 (1 second).');
+        }
+        // Build primary check
+        checks.push({
+            name: 'primary',
+            url,
+            method: 'GET',
+            headers: { 'User-Agent': 'workers-release-promoter/1.0 (smoke-test)' },
+            expectedStatus,
+            expectedBodyIncludes,
+            timeoutMs,
+        });
+        // Parse additional paths if provided
+        const additionalPaths = core.getInput('smoke-test-paths', { required: false });
+        if (additionalPaths) {
+            const baseUrl = new URL(url);
+            const paths = additionalPaths.split(',').map((p) => p.trim()).filter(Boolean);
+            for (const path of paths) {
+                const checkUrl = new URL(path, baseUrl.origin).toString();
+                checks.push({
+                    name: path,
+                    url: checkUrl,
+                    method: 'GET',
+                    headers: { 'User-Agent': 'workers-release-promoter/1.0 (smoke-test)' },
+                    expectedStatus,
+                    expectedBodyIncludes: undefined,
+                    timeoutMs,
+                });
+            }
+        }
     }
     const retries = parseInt(core.getInput('smoke-test-retries') || '3', 10);
     if (isNaN(retries) || retries < 0 || retries > 10) {
         throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, 'Invalid smoke-test-retries: must be between 0 and 10.');
     }
+    const retryIntervalMs = parseInt(core.getInput('smoke-test-retry-interval') || '2000', 10);
+    const deadlineMs = parseInt(core.getInput('smoke-test-deadline') || '120000', 10);
     return {
-        url,
-        expectedStatus,
-        expectedBodyContains,
-        timeoutMs,
+        checks,
         retries,
+        retryIntervalMs,
+        deadlineMs,
+        required,
+        customCommand,
     };
 }
 /**
@@ -33317,10 +33404,10 @@ function resolveSmokeTest() {
  * Fails fast with descriptive error messages.
  */
 function getInputs() {
-    core.info('📥 Parsing action inputs…');
+    core.info('[inputs] Parsing action inputs');
     // Auth (fail early if missing)
     const auth = resolveAuth();
-    core.info('✅ Cloudflare authentication resolved');
+    core.info('[inputs] Cloudflare authentication resolved');
     // Worker configuration
     const workerName = core.getInput('worker-name', { required: false }) || undefined;
     const workingDirectory = core.getInput('working-directory') || '.';
@@ -33328,26 +33415,52 @@ function getInputs() {
     // Smoke test
     const smokeTest = resolveSmokeTest();
     if (smokeTest) {
-        core.info(`✅ Smoke test configured: ${smokeTest.url}`);
+        core.info(`[inputs] Smoke test configured: ${smokeTest.checks.length} check(s), required=${smokeTest.required}`);
+        if (smokeTest.customCommand) {
+            core.info(`[inputs] Custom smoke command: ${smokeTest.customCommand}`);
+        }
     }
     else {
-        core.info('ℹ️  Smoke testing disabled (no smoke-test-url provided)');
+        core.info('[inputs] Smoke testing disabled (no URL or command provided)');
     }
-    // Rollout
-    const rolloutInput = core.getInput('rollout-percentage') || '100';
+    // Promotion strategy
+    const strategyInput = (core.getInput('promotion-strategy') || 'immediate').toLowerCase();
+    let promotionStrategy;
+    if (strategyInput === 'immediate' || strategyInput === 'gradual' || strategyInput === 'staging-only') {
+        promotionStrategy = strategyInput;
+    }
+    else {
+        throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, `Invalid promotion-strategy: "${strategyInput}". Must be one of: immediate, gradual, staging-only.`);
+    }
+    // Rollout steps
     let rolloutSteps;
-    try {
-        rolloutSteps = (0, utils_1.parsePercentages)(rolloutInput);
+    if (promotionStrategy === 'gradual') {
+        const rolloutInput = core.getInput('gradual-steps') || core.getInput('rollout-percentage') || '10,50,100';
+        try {
+            rolloutSteps = (0, utils_1.parsePercentages)(rolloutInput);
+        }
+        catch (err) {
+            throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, `Invalid gradual-steps: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }
-    catch (err) {
-        throw new types_1.ActionError(types_1.ErrorCode.INVALID_INPUT, `Invalid rollout-percentage: ${err instanceof Error ? err.message : String(err)}`);
+    else if (promotionStrategy === 'staging-only') {
+        rolloutSteps = []; // No production steps
     }
-    core.info(`✅ Rollout steps: ${rolloutSteps.join('% → ')}%`);
+    else {
+        rolloutSteps = [100]; // Immediate
+    }
+    const gradualStepWaitSeconds = parseInt(core.getInput('gradual-step-wait-seconds') || '5', 10);
+    const postStepSmokeTests = (core.getInput('post-step-smoke-tests') || 'true').toLowerCase() === 'true';
+    core.info(`[inputs] Strategy: ${promotionStrategy}`);
+    if (promotionStrategy === 'gradual') {
+        core.info(`[inputs] Rollout steps: ${rolloutSteps.join('% -> ')}%`);
+        core.info(`[inputs] Step wait: ${gradualStepWaitSeconds}s, post-step smoke: ${postStepSmokeTests}`);
+    }
     // Dry run
     const dryRunInput = core.getInput('dry-run') || 'false';
     const dryRun = dryRunInput.toLowerCase() === 'true';
     if (dryRun) {
-        core.info('🔍 Dry-run mode enabled — no deployments will be made');
+        core.notice('Dry-run mode enabled -- no deployments will be made');
     }
     // GitHub token
     const githubToken = core.getInput('github-token') || process.env['GITHUB_TOKEN'] || '';
@@ -33358,6 +33471,9 @@ function getInputs() {
         environment,
         smokeTest,
         rolloutSteps,
+        promotionStrategy,
+        gradualStepWaitSeconds,
+        postStepSmokeTests,
         dryRun,
         githubToken,
     };
@@ -33372,7 +33488,7 @@ function getInputs() {
 "use strict";
 
 // ─────────────────────────────────────────────────────────
-// src/promotion.ts — Promotion plans, gradual rollout, state machine
+// src/promotion.ts — Promotion plans, strategies, state machine
 // ─────────────────────────────────────────────────────────
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -33415,44 +33531,72 @@ const github = __importStar(__nccwpck_require__(3228));
 const cloudflare = __importStar(__nccwpck_require__(2316));
 const smoke_1 = __nccwpck_require__(2754);
 const utils_1 = __nccwpck_require__(1798);
-/**
- * Create a new lifecycle tracker starting at a given state.
- */
+// ─── Lifecycle Helpers ───────────────────────────────────
 function createLifecycleTracker(initial) {
     return {
         current: initial,
         history: [{ state: initial, timestamp: (0, utils_1.timestamp)() }],
     };
 }
-/**
- * Transition the lifecycle tracker to a new state.
- */
 function transition(tracker, state) {
     tracker.current = state;
     tracker.history.push({ state, timestamp: (0, utils_1.timestamp)() });
     core.info(`    [lifecycle] ${state}`);
 }
+// ─── Plan Builder ────────────────────────────────────────
 /**
  * Build a promotion plan from action inputs.
+ * Normalizes user-friendly strategy names into executable step sequences.
  */
 function buildPromotionPlan(inputs) {
+    const steps = [];
+    switch (inputs.promotionStrategy) {
+        case 'immediate':
+            steps.push({
+                percent: 100,
+                pauseAfterSeconds: 0,
+                requiresPostStepSmoke: !!inputs.smokeTest,
+                label: 'Full production deployment',
+            });
+            break;
+        case 'gradual':
+            for (let i = 0; i < inputs.rolloutSteps.length; i++) {
+                const pct = inputs.rolloutSteps[i];
+                const isLast = i === inputs.rolloutSteps.length - 1;
+                steps.push({
+                    percent: pct,
+                    pauseAfterSeconds: isLast ? 0 : inputs.gradualStepWaitSeconds,
+                    requiresPostStepSmoke: inputs.postStepSmokeTests && !!inputs.smokeTest,
+                    label: `Gradual rollout to ${pct}%`,
+                });
+            }
+            break;
+        case 'staging-only':
+            // No production steps -- candidate verified only
+            break;
+    }
     return {
-        steps: inputs.rolloutSteps,
+        strategy: inputs.promotionStrategy,
+        steps,
         smokeTestEnabled: !!inputs.smokeTest,
         workerName: inputs.workerName,
         environment: inputs.environment,
     };
 }
+// ─── Promotion Executor ──────────────────────────────────
 /**
  * Execute the full promotion flow:
  *
  *  1. Look up current stable version (rollback target)
- *  2. Upload new version
- *  3. For each rollout step:
- *     a. Promote to the step's percentage
- *     b. Run smoke tests (if enabled)
- *     c. On failure → rollback to stable
- *  4. Return the overall result
+ *  2. Deploy or upload candidate
+ *  3. Run candidate smoke tests (if enabled)
+ *  4. For staging-only: stop after verification
+ *  5. For immediate/gradual:
+ *     a. Execute each promotion step
+ *     b. Run post-step smoke tests (if enabled)
+ *     c. On failure -> rollback to stable
+ *  6. Run post-promotion verification (if enabled)
+ *  7. Return the overall result
  */
 async function executePromotion(inputs, plan, releaseContext) {
     const lifecycle = createLifecycleTracker('context_resolved');
@@ -33464,167 +33608,25 @@ async function executePromotion(inputs, plan, releaseContext) {
         lifecycle,
     };
     try {
-        // ── Step 1: Look up current stable version ──
+        // ── Phase 1: Prepare ──
         result.state = 'deploying';
         core.info('');
-        core.info('═══════════════════════════════════════════');
+        core.info('='.repeat(50));
         core.info('  Phase 1: Preparing Deployment');
-        core.info('═══════════════════════════════════════════');
+        core.info('='.repeat(50));
         const previousStableVersionId = await cloudflare.lookupCurrentStableVersion(inputs);
         result.previousStableVersionId = previousStableVersionId || undefined;
-        // ── Step 2: Deploy / Upload ──
-        if (plan.steps.length === 1 && plan.steps[0] === 100) {
-            // Simple deployment — no gradual rollout needed
-            core.info('');
-            core.info('═══════════════════════════════════════════');
-            core.info('  Phase 2: Deploying (immediate 100%)');
-            core.info('═══════════════════════════════════════════');
-            const deployResult = await cloudflare.deployCandidate(inputs, releaseContext);
-            result.deploy = deployResult;
-            if (!deployResult.success) {
-                result.state = 'failed';
-                result.error = `Deployment failed: ${deployResult.stderr}`;
-                result.completedAt = (0, utils_1.timestamp)();
-                transition(lifecycle, 'failed');
-                return result;
-            }
-            transition(lifecycle, 'candidate_deployed');
-            // ── Log deployment summary ──
-            logCandidateSummary(deployResult, result.previousStableVersionId);
-            // Record the step result
-            const stepResult = {
-                percentage: 100,
-                success: true,
-                message: `Deployed version ${deployResult.versionId || 'unknown'}`,
-            };
-            // ── Smoke test at 100% ──
-            if (inputs.smokeTest) {
-                result.state = 'smoke-testing';
-                transition(lifecycle, 'smoke_tests_running');
-                core.info('');
-                core.info('═══════════════════════════════════════════');
-                core.info('  Phase 3: Smoke Testing');
-                core.info('═══════════════════════════════════════════');
-                // Wait a moment for deployment to propagate
-                core.info('⏳ Waiting 5s for deployment propagation…');
-                await (0, utils_1.sleep)(5000);
-                const smokeResult = await (0, smoke_1.runSmokeTest)(inputs.smokeTest);
-                stepResult.smokeTest = smokeResult;
-                if (!smokeResult.passed) {
-                    core.error('❌ Smoke test failed — initiating rollback…');
-                    stepResult.success = false;
-                    result.stepResults.push(stepResult);
-                    // Rollback
-                    if (previousStableVersionId) {
-                        transition(lifecycle, 'rollback_in_progress');
-                        const rollbackResult = await cloudflare.rollbackToVersion(previousStableVersionId, inputs);
-                        result.rollback = rollbackResult;
-                        result.state = 'rolled-back';
-                        transition(lifecycle, 'rolled_back');
-                    }
-                    else {
-                        core.warning('⚠️ No previous version available for rollback.');
-                        result.state = 'failed';
-                        transition(lifecycle, 'failed');
-                    }
-                    result.error = `Smoke test failed: ${smokeResult.error || 'Unexpected failure'}`;
-                    result.completedAt = (0, utils_1.timestamp)();
-                    return result;
-                }
-            }
-            result.stepResults.push(stepResult);
-            result.state = 'complete';
-            result.completedAt = (0, utils_1.timestamp)();
-            transition(lifecycle, 'promoted');
-            return result;
+        transition(lifecycle, 'candidate_deploy_started');
+        // ── Phase 2: Deploy / Upload ──
+        if (plan.strategy === 'immediate') {
+            return await executeImmediate(inputs, plan, result, lifecycle, releaseContext, previousStableVersionId);
         }
-        // ── Gradual rollout ──
-        core.info('');
-        core.info('═══════════════════════════════════════════');
-        core.info('  Phase 2: Uploading Version (Gradual Rollout)');
-        core.info('═══════════════════════════════════════════');
-        const newVersionId = await cloudflare.uploadVersion(inputs);
-        transition(lifecycle, 'candidate_deployed');
-        // Give Cloudflare a moment to register the version
-        await (0, utils_1.sleep)(2000);
-        // ── Step 3: Gradual promotion steps ──
-        for (let i = 0; i < plan.steps.length; i++) {
-            const pct = plan.steps[i];
-            result.state = 'promoting';
-            transition(lifecycle, 'promotion_in_progress');
-            core.info('');
-            core.info('═══════════════════════════════════════════');
-            core.info(`  Phase ${3 + i}: Promoting to ${pct}% (step ${i + 1}/${plan.steps.length})`);
-            core.info('═══════════════════════════════════════════');
-            const stepResult = await cloudflare.promoteVersion(newVersionId, pct, inputs, previousStableVersionId);
-            // Smoke test after each step (if enabled and not the last step,
-            // or always on the last step)
-            if (inputs.smokeTest) {
-                result.state = 'smoke-testing';
-                transition(lifecycle, 'smoke_tests_running');
-                core.info('⏳ Waiting 5s for traffic shift to propagate…');
-                await (0, utils_1.sleep)(5000);
-                const smokeResult = await (0, smoke_1.runSmokeTest)(inputs.smokeTest);
-                stepResult.smokeTest = smokeResult;
-                if (!smokeResult.passed) {
-                    core.error(`❌ Smoke test failed at ${pct}% — initiating rollback…`);
-                    stepResult.success = false;
-                    result.stepResults.push(stepResult);
-                    // Rollback
-                    if (previousStableVersionId) {
-                        transition(lifecycle, 'rollback_in_progress');
-                        const rollbackResult = await cloudflare.rollbackToVersion(previousStableVersionId, inputs);
-                        result.rollback = rollbackResult;
-                        result.state = 'rolled-back';
-                        transition(lifecycle, 'rolled_back');
-                    }
-                    else {
-                        core.warning('⚠️ No previous version available for rollback.');
-                        result.state = 'failed';
-                        transition(lifecycle, 'failed');
-                    }
-                    result.error = `Smoke test failed at ${pct}%: ${smokeResult.error || 'Unexpected failure'}`;
-                    result.completedAt = (0, utils_1.timestamp)();
-                    return result;
-                }
-            }
-            if (!stepResult.success) {
-                core.error(`❌ Promotion to ${pct}% failed — initiating rollback…`);
-                result.stepResults.push(stepResult);
-                if (previousStableVersionId) {
-                    transition(lifecycle, 'rollback_in_progress');
-                    const rollbackResult = await cloudflare.rollbackToVersion(previousStableVersionId, inputs);
-                    result.rollback = rollbackResult;
-                    result.state = 'rolled-back';
-                    transition(lifecycle, 'rolled_back');
-                }
-                else {
-                    result.state = 'failed';
-                    transition(lifecycle, 'failed');
-                }
-                result.error = `Promotion failed at ${pct}%: ${stepResult.message}`;
-                result.completedAt = (0, utils_1.timestamp)();
-                return result;
-            }
-            result.stepResults.push(stepResult);
-            core.info(`✅ Step ${i + 1}/${plan.steps.length} complete: ${pct}%`);
+        else if (plan.strategy === 'gradual') {
+            return await executeGradual(inputs, plan, result, lifecycle, releaseContext, previousStableVersionId);
         }
-        result.deploy = {
-            success: true,
-            versionId: newVersionId,
-            workerName: inputs.workerName,
-            releaseTag: releaseContext?.tagName,
-            sourceTrigger: github.context.eventName,
-            gitSha: github.context.sha,
-            gitRef: github.context.ref,
-            deployedAt: (0, utils_1.timestamp)(),
-            stdout: '',
-            stderr: '',
-        };
-        result.state = 'complete';
-        result.completedAt = (0, utils_1.timestamp)();
-        transition(lifecycle, 'promoted');
-        return result;
+        else {
+            return await executeStagingOnly(inputs, result, lifecycle, releaseContext, previousStableVersionId);
+        }
     }
     catch (err) {
         result.state = 'failed';
@@ -33632,7 +33634,7 @@ async function executePromotion(inputs, plan, releaseContext) {
         result.completedAt = (0, utils_1.timestamp)();
         // Attempt emergency rollback
         if (result.previousStableVersionId) {
-            core.warning('⚠️ Unexpected error — attempting emergency rollback…');
+            core.warning('[promotion] Unexpected error -- attempting emergency rollback');
             transition(lifecycle, 'rollback_in_progress');
             try {
                 const rollbackResult = await cloudflare.rollbackToVersion(result.previousStableVersionId, inputs);
@@ -33641,7 +33643,7 @@ async function executePromotion(inputs, plan, releaseContext) {
                 transition(lifecycle, 'rolled_back');
             }
             catch (rollbackErr) {
-                core.error(`❌ Emergency rollback also failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
+                core.error(`[promotion] Emergency rollback also failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
                 transition(lifecycle, 'failed');
             }
         }
@@ -33651,13 +33653,237 @@ async function executePromotion(inputs, plan, releaseContext) {
         return result;
     }
 }
+// ─── Strategy: Immediate ─────────────────────────────────
+async function executeImmediate(inputs, _plan, result, lifecycle, releaseContext, previousStableVersionId) {
+    core.info('');
+    core.info('='.repeat(50));
+    core.info('  Phase 2: Deploying (immediate 100%)');
+    core.info('='.repeat(50));
+    const deployResult = await cloudflare.deployCandidate(inputs, releaseContext);
+    result.deploy = deployResult;
+    if (!deployResult.success) {
+        result.state = 'failed';
+        result.error = `Deployment failed: ${deployResult.stderr}`;
+        result.completedAt = (0, utils_1.timestamp)();
+        transition(lifecycle, 'failed');
+        return result;
+    }
+    transition(lifecycle, 'candidate_deployed');
+    logCandidateSummary(deployResult, previousStableVersionId);
+    // ── Candidate smoke test ──
+    if (inputs.smokeTest) {
+        const smokeResult = await runCandidateSmokeTest(inputs, lifecycle, deployResult);
+        result.candidateSmokeResult = smokeResult;
+        if (!smokeResult.passed) {
+            result.stepResults.push({
+                percentage: 100,
+                success: false,
+                message: `Candidate smoke test failed: ${smokeResult.failureReason}`,
+                smokeTest: smokeResult,
+            });
+            return await handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, `Candidate smoke test failed: ${smokeResult.failureReason || 'Unexpected failure'}`);
+        }
+        transition(lifecycle, 'candidate_verified');
+    }
+    // Record the step result
+    const stepResult = {
+        percentage: 100,
+        success: true,
+        message: `Deployed version ${deployResult.versionId || 'unknown'}`,
+        smokeTest: result.candidateSmokeResult,
+    };
+    result.stepResults.push(stepResult);
+    // ── Post-promotion smoke test ──
+    if (inputs.smokeTest) {
+        const postSmokeResult = await runPostPromotionSmokeTest(inputs, lifecycle, deployResult);
+        result.postPromotionSmokeResult = postSmokeResult;
+        if (!postSmokeResult.passed) {
+            return await handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, `Post-promotion smoke test failed: ${postSmokeResult.failureReason || 'Unexpected failure'}`);
+        }
+        transition(lifecycle, 'post_promotion_verified');
+    }
+    result.state = 'complete';
+    result.completedAt = (0, utils_1.timestamp)();
+    transition(lifecycle, 'promoted');
+    return result;
+}
+// ─── Strategy: Gradual ───────────────────────────────────
+async function executeGradual(inputs, plan, result, lifecycle, releaseContext, previousStableVersionId) {
+    core.info('');
+    core.info('='.repeat(50));
+    core.info('  Phase 2: Uploading Version (Gradual Rollout)');
+    core.info('='.repeat(50));
+    const newVersionId = await cloudflare.uploadVersion(inputs);
+    transition(lifecycle, 'candidate_deployed');
+    // Populate deploy result for gradual flow
+    result.deploy = {
+        success: true,
+        versionId: newVersionId,
+        workerName: inputs.workerName,
+        releaseTag: releaseContext?.tagName,
+        sourceTrigger: github.context.eventName,
+        gitSha: github.context.sha,
+        gitRef: github.context.ref,
+        deployedAt: (0, utils_1.timestamp)(),
+        stdout: '',
+        stderr: '',
+    };
+    // Give Cloudflare a moment to register the version
+    await (0, utils_1.sleep)(2000);
+    // ── Candidate smoke test (before any promotion) ──
+    if (inputs.smokeTest && inputs.smokeTest.checks.length > 0) {
+        const smokeResult = await runCandidateSmokeTest(inputs, lifecycle, result.deploy);
+        result.candidateSmokeResult = smokeResult;
+        if (!smokeResult.passed) {
+            return await handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, `Candidate smoke test failed before gradual rollout: ${smokeResult.failureReason || 'Unexpected failure'}`);
+        }
+        transition(lifecycle, 'candidate_verified');
+    }
+    // ── Gradual steps ──
+    for (let i = 0; i < plan.steps.length; i++) {
+        const step = plan.steps[i];
+        transition(lifecycle, 'promotion_in_progress');
+        core.info('');
+        core.info('='.repeat(50));
+        core.info(`  Step ${i + 1}/${plan.steps.length}: ${step.label}`);
+        core.info('='.repeat(50));
+        const stepResult = await cloudflare.promoteVersion(newVersionId, step.percent, inputs, previousStableVersionId);
+        // Promotion step failed
+        if (!stepResult.success) {
+            core.error(`[promotion] Step failed at ${step.percent}% -- initiating rollback`);
+            result.stepResults.push(stepResult);
+            return await handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, `Promotion failed at ${step.percent}%: ${stepResult.message}`);
+        }
+        // Post-step smoke test
+        if (step.requiresPostStepSmoke && inputs.smokeTest) {
+            core.info(`[promotion] Waiting ${step.pauseAfterSeconds}s before verification`);
+            await (0, utils_1.sleep)(step.pauseAfterSeconds * 1000 + 5000); // extra 5s for propagation
+            transition(lifecycle, 'smoke_tests_running');
+            const smokeResult = await (0, smoke_1.runSmokeTest)(inputs.smokeTest, 'post-promotion');
+            stepResult.smokeTest = smokeResult;
+            if (!smokeResult.passed) {
+                core.error(`[promotion] Smoke test failed at ${step.percent}% -- initiating rollback`);
+                stepResult.success = false;
+                result.stepResults.push(stepResult);
+                return await handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, `Smoke test failed at ${step.percent}%: ${smokeResult.failureReason || 'Unexpected failure'}`);
+            }
+        }
+        else if (step.pauseAfterSeconds > 0) {
+            core.info(`[promotion] Waiting ${step.pauseAfterSeconds}s before next step`);
+            await (0, utils_1.sleep)(step.pauseAfterSeconds * 1000);
+        }
+        result.stepResults.push(stepResult);
+        core.info(`[promotion] Step ${i + 1}/${plan.steps.length} complete: ${step.percent}%`);
+    }
+    // ── Post-promotion verification ──
+    if (inputs.smokeTest) {
+        const postSmokeResult = await runPostPromotionSmokeTest(inputs, lifecycle, result.deploy);
+        result.postPromotionSmokeResult = postSmokeResult;
+        if (!postSmokeResult.passed) {
+            return await handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, `Post-promotion smoke test failed: ${postSmokeResult.failureReason || 'Unexpected failure'}`);
+        }
+        transition(lifecycle, 'post_promotion_verified');
+    }
+    result.state = 'complete';
+    result.completedAt = (0, utils_1.timestamp)();
+    transition(lifecycle, 'promoted');
+    return result;
+}
+// ─── Strategy: Staging-Only ──────────────────────────────
+async function executeStagingOnly(inputs, result, lifecycle, releaseContext, previousStableVersionId) {
+    core.info('');
+    core.info('='.repeat(50));
+    core.info('  Phase 2: Deploying Candidate (staging-only)');
+    core.info('='.repeat(50));
+    core.notice('Strategy: staging-only -- candidate will be deployed and verified but NOT promoted to production traffic');
+    const deployResult = await cloudflare.deployCandidate(inputs, releaseContext);
+    result.deploy = deployResult;
+    if (!deployResult.success) {
+        result.state = 'failed';
+        result.error = `Candidate deployment failed: ${deployResult.stderr}`;
+        result.completedAt = (0, utils_1.timestamp)();
+        transition(lifecycle, 'failed');
+        return result;
+    }
+    transition(lifecycle, 'candidate_deployed');
+    logCandidateSummary(deployResult, previousStableVersionId);
+    // Run candidate verification
+    if (inputs.smokeTest) {
+        const smokeResult = await runCandidateSmokeTest(inputs, lifecycle, deployResult);
+        result.candidateSmokeResult = smokeResult;
+        if (!smokeResult.passed && inputs.smokeTest.required) {
+            result.state = 'failed';
+            result.error = `Candidate verification failed: ${smokeResult.failureReason}`;
+            result.completedAt = (0, utils_1.timestamp)();
+            transition(lifecycle, 'failed');
+            return result;
+        }
+        if (smokeResult.passed) {
+            transition(lifecycle, 'candidate_verified');
+        }
+    }
+    // Terminal state: candidate verified only
+    result.state = 'staging-only';
+    result.completedAt = (0, utils_1.timestamp)();
+    transition(lifecycle, 'candidate_verified_only');
+    core.notice('Staging-only deployment complete. Candidate is ready for manual promotion.');
+    return result;
+}
+// ─── Shared Helpers ──────────────────────────────────────
+/**
+ * Run candidate smoke tests (Phase 1 verification).
+ */
+async function runCandidateSmokeTest(inputs, lifecycle, _deploy) {
+    core.info('');
+    core.info('='.repeat(50));
+    core.info('  Candidate Verification (smoke tests)');
+    core.info('='.repeat(50));
+    transition(lifecycle, 'smoke_tests_running');
+    // Wait for deployment to propagate
+    core.info('[smoke-test] Waiting 5s for deployment propagation');
+    await (0, utils_1.sleep)(5000);
+    return await (0, smoke_1.runSmokeTest)(inputs.smokeTest, 'candidate');
+}
+/**
+ * Run post-promotion smoke tests (Phase 2 verification).
+ */
+async function runPostPromotionSmokeTest(inputs, lifecycle, _deploy) {
+    core.info('');
+    core.info('='.repeat(50));
+    core.info('  Post-Promotion Verification (smoke tests)');
+    core.info('='.repeat(50));
+    transition(lifecycle, 'smoke_tests_running');
+    // Wait for traffic shift to propagate
+    core.info('[smoke-test] Waiting 5s for traffic propagation');
+    await (0, utils_1.sleep)(5000);
+    return await (0, smoke_1.runSmokeTest)(inputs.smokeTest, 'post-promotion');
+}
+/**
+ * Handle smoke test or promotion failure with rollback.
+ */
+async function handleSmokeFailure(inputs, result, lifecycle, previousStableVersionId, errorMessage) {
+    if (previousStableVersionId) {
+        transition(lifecycle, 'rollback_in_progress');
+        const rollbackResult = await cloudflare.rollbackToVersion(previousStableVersionId, inputs);
+        result.rollback = rollbackResult;
+        result.state = 'rolled-back';
+        transition(lifecycle, 'rolled_back');
+    }
+    else {
+        core.warning('[promotion] No previous version available for rollback');
+        result.state = 'failed';
+        transition(lifecycle, 'failed');
+    }
+    result.error = errorMessage || 'Verification failed';
+    result.completedAt = (0, utils_1.timestamp)();
+    return result;
+}
 /**
  * Log concise deployment summary for operator visibility.
- * Appears in both CI logs and job summary.
  */
 function logCandidateSummary(deploy, previousStableVersionId) {
     core.info('');
-    core.info('─── Candidate Deployment Summary ──────────────');
+    core.info('--- Candidate Deployment Summary ----------------');
     core.info(`  Worker:            ${deploy.workerName || '(from config)'}`);
     core.info(`  Release Tag:       ${deploy.releaseTag || '(none)'}`);
     core.info(`  Version ID:        ${deploy.versionId || '(unknown)'}`);
@@ -33674,9 +33900,9 @@ function logCandidateSummary(deploy, previousStableVersionId) {
         core.info(`  Previous Stable:   ${previousStableVersionId}`);
     }
     else {
-        core.info(`  Previous Stable:   (none — first deployment)`);
+        core.info(`  Previous Stable:   (none -- first deployment)`);
     }
-    core.info('─────────────────────────────────────────────');
+    core.info('-'.repeat(50));
     core.info('');
 }
 
@@ -33705,9 +33931,23 @@ function buildReleaseNotesSection(result, environment, rolloutSteps) {
         if (step.smokeTest) {
             smokeTestPassed = step.smokeTest.passed;
             if (!smokeTestPassed)
-                break; // One failure is enough
+                break;
         }
     }
+    // Also check candidate/post-promotion smoke results
+    if (smokeTestPassed === undefined && result.candidateSmokeResult) {
+        smokeTestPassed = result.candidateSmokeResult.passed;
+    }
+    if (smokeTestPassed !== false && result.postPromotionSmokeResult) {
+        smokeTestPassed = result.postPromotionSmokeResult.passed;
+    }
+    const promotionResult = result.state === 'complete'
+        ? 'success'
+        : result.state === 'staging-only'
+            ? 'staging-only'
+            : result.state === 'rolled-back'
+                ? 'rolled-back'
+                : 'failed';
     return {
         deploymentId: result.deploy?.deploymentId,
         versionId: result.deploy?.versionId,
@@ -33715,11 +33955,8 @@ function buildReleaseNotesSection(result, environment, rolloutSteps) {
         stagingUrl: result.deploy?.stagingUrl,
         productionUrl: result.deploy?.productionUrl,
         smokeTestPassed,
-        promotionResult: result.state === 'complete'
-            ? 'success'
-            : result.state === 'rolled-back'
-                ? 'rolled-back'
-                : 'failed',
+        promotionResult,
+        promotionStrategy: result.deploy ? (result.state === 'staging-only' ? 'staging-only' : undefined) : undefined,
         rollbackTriggered: result.state === 'rolled-back',
         rollbackVersionId: result.rollback?.rolledBackToVersionId,
         releaseTag: result.deploy?.releaseTag,
@@ -33727,30 +33964,27 @@ function buildReleaseNotesSection(result, environment, rolloutSteps) {
         sourceTrigger: result.deploy?.sourceTrigger,
         timestamp: result.completedAt || (0, utils_1.timestamp)(),
         environment,
-        rolloutSteps: rolloutSteps ? rolloutSteps.map((s) => `${s}%`).join(' → ') : undefined,
+        rolloutSteps: rolloutSteps ? rolloutSteps.map((s) => `${s}%`).join(' -> ') : undefined,
         previousStableVersionId: result.previousStableVersionId,
     };
 }
 /**
  * Build the deployment summary markdown for the GitHub Actions job summary.
  */
-function buildJobSummary(result, environment, tagName) {
+function buildJobSummary(result, environment, tagName, strategy) {
     const lines = [];
     // Header
-    lines.push('# 🚀 Workers Release Promoter');
+    lines.push('# Workers Release Promoter');
     lines.push('');
-    // Status badge
-    const statusEmoji = result.state === 'complete'
-        ? '✅'
-        : result.state === 'rolled-back'
-            ? '⚠️'
-            : '❌';
+    // Status
     const statusText = result.state === 'complete'
         ? 'Deployment Successful'
-        : result.state === 'rolled-back'
-            ? 'Rolled Back'
-            : 'Deployment Failed';
-    lines.push(`## ${statusEmoji} ${statusText}`);
+        : result.state === 'staging-only'
+            ? 'Staging-Only Complete'
+            : result.state === 'rolled-back'
+                ? 'Rolled Back'
+                : 'Deployment Failed';
+    lines.push(`## ${statusText}`);
     lines.push('');
     // Summary table
     lines.push('| Property | Value |');
@@ -33759,6 +33993,9 @@ function buildJobSummary(result, environment, tagName) {
         lines.push(`| **Release** | \`${tagName}\` |`);
     }
     lines.push(`| **Environment** | \`${environment}\` |`);
+    if (strategy) {
+        lines.push(`| **Strategy** | \`${strategy}\` |`);
+    }
     lines.push(`| **Status** | ${statusText} |`);
     if (result.deploy?.versionId) {
         lines.push(`| **Version ID** | \`${result.deploy.versionId}\` |`);
@@ -33791,41 +34028,63 @@ function buildJobSummary(result, environment, tagName) {
     lines.push('');
     // Rollout steps
     if (result.stepResults.length > 0) {
-        lines.push('### 📊 Rollout Steps');
+        lines.push('### Rollout Steps');
         lines.push('');
         lines.push('| Step | Percentage | Status | Smoke Test |');
         lines.push('| ---- | ---------- | ------ | ---------- |');
         result.stepResults.forEach((step, i) => {
-            const stepStatus = step.success ? '✅ OK' : '❌ Failed';
-            let smokeCol = '—';
+            const stepStatus = step.success ? 'OK' : 'Failed';
+            let smokeCol = '--';
             if (step.smokeTest) {
                 smokeCol = step.smokeTest.passed
-                    ? `✅ ${step.smokeTest.latencyMs}ms`
-                    : `❌ ${step.smokeTest.error || 'Failed'}`;
+                    ? `Passed (${step.smokeTest.durationMs}ms)`
+                    : `Failed: ${step.smokeTest.failureReason || 'Unknown'}`;
             }
             lines.push(`| ${i + 1} | ${step.percentage}% | ${stepStatus} | ${smokeCol} |`);
         });
         lines.push('');
     }
+    // Candidate verification
+    if (result.candidateSmokeResult) {
+        lines.push('### Candidate Verification');
+        lines.push('');
+        lines.push(`Status: **${result.candidateSmokeResult.status}** (${result.candidateSmokeResult.durationMs}ms)`);
+        if (result.candidateSmokeResult.checks.length > 0) {
+            lines.push('');
+            lines.push('| Check | Status | Latency | Details |');
+            lines.push('| ----- | ------ | ------- | ------- |');
+            for (const check of result.candidateSmokeResult.checks) {
+                lines.push(`| ${check.name} | ${check.passed ? 'Passed' : 'Failed'} | ${check.latencyMs}ms | ${check.error || `Status ${check.statusCode}`} |`);
+            }
+        }
+        lines.push('');
+    }
+    // Post-promotion verification
+    if (result.postPromotionSmokeResult) {
+        lines.push('### Post-Promotion Verification');
+        lines.push('');
+        lines.push(`Status: **${result.postPromotionSmokeResult.status}** (${result.postPromotionSmokeResult.durationMs}ms)`);
+        lines.push('');
+    }
     // Rollback info
     if (result.rollback) {
-        lines.push('### ⏪ Rollback');
+        lines.push('### Rollback');
         lines.push('');
         lines.push(result.rollback.success
-            ? `✅ Successfully rolled back to version \`${result.rollback.rolledBackToVersionId}\``
-            : `❌ Rollback failed: ${result.rollback.message}`);
+            ? `Rolled back to version \`${result.rollback.rolledBackToVersionId}\``
+            : `Rollback failed: ${result.rollback.message}`);
         lines.push('');
     }
     // Error
     if (result.error) {
-        lines.push('### ❌ Error');
+        lines.push('### Error');
         lines.push('');
         lines.push(`\`\`\`\n${result.error}\n\`\`\``);
         lines.push('');
     }
     // Lifecycle history
     if (result.lifecycle && result.lifecycle.history.length > 0) {
-        lines.push('### 📋 Deployment Lifecycle');
+        lines.push('### Deployment Lifecycle');
         lines.push('');
         lines.push('| State | Timestamp |');
         lines.push('| ----- | --------- |');
@@ -33846,7 +34105,7 @@ function buildJobSummary(result, environment, tagName) {
 "use strict";
 
 // ─────────────────────────────────────────────────────────
-// src/smoke.ts — Fetch-based smoke test engine
+// src/smoke.ts — Fetch-based smoke test engine + custom command
 // ─────────────────────────────────────────────────────────
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -33887,33 +34146,103 @@ const core = __importStar(__nccwpck_require__(7484));
 const types_1 = __nccwpck_require__(8522);
 const utils_1 = __nccwpck_require__(1798);
 /**
- * Run a smoke test against the deployed Worker.
+ * Run the full smoke test suite against the deployed Worker.
  *
- * Uses Node 20 native fetch (no extra HTTP dependencies).
- * Supports: expected status, body-contains check, timeout, retries with backoff.
+ * Supports:
+ *  - Multiple endpoint checks via native fetch (Node 20)
+ *  - Custom command execution
+ *  - Configurable retries, timeouts, and total deadline
+ *  - Two-phase verification (candidate vs post-promotion)
  */
-async function runSmokeTest(config) {
-    core.info(`🧪 Running smoke test: ${config.url}`);
-    core.info(`   Expected status: ${config.expectedStatus}, ` +
-        `timeout: ${(0, utils_1.formatDuration)(config.timeoutMs)}, ` +
-        `retries: ${config.retries}`);
-    if (config.expectedBodyContains) {
-        core.info(`   Expected body contains: "${(0, utils_1.truncate)(config.expectedBodyContains, 80)}"`);
+async function runSmokeTest(config, phase = 'candidate') {
+    const startTime = Date.now();
+    const startedAt = (0, utils_1.timestamp)();
+    const checkResults = [];
+    let rawCommandOutput;
+    let overallPassed = true;
+    let failureReason;
+    core.info(`[smoke-test] Starting ${phase} verification (${config.checks.length} check(s))`);
+    // Set a total deadline
+    const deadline = startTime + config.deadlineMs;
+    try {
+        // Run fetch-based checks
+        for (const check of config.checks) {
+            if (Date.now() >= deadline) {
+                failureReason = `Total smoke test deadline exceeded (${(0, utils_1.formatDuration)(config.deadlineMs)})`;
+                overallPassed = false;
+                break;
+            }
+            const result = await runSingleCheck(check, config.retries, config.retryIntervalMs, deadline);
+            checkResults.push(result);
+            if (!result.passed) {
+                overallPassed = false;
+                failureReason = `Check "${result.name}" failed: ${result.error || 'unknown error'}`;
+                if (config.required)
+                    break; // Stop on first required failure
+            }
+        }
+        // Run custom command if provided
+        if (config.customCommand && overallPassed && Date.now() < deadline) {
+            core.info(`[smoke-test] Running custom command: ${config.customCommand}`);
+            const cmdResult = await runCustomCommand(config.customCommand);
+            rawCommandOutput = cmdResult.output;
+            if (!cmdResult.success) {
+                overallPassed = false;
+                failureReason = `Custom smoke command failed: ${cmdResult.error}`;
+            }
+            else {
+                core.info('[smoke-test] Custom command passed');
+            }
+        }
+    }
+    catch (err) {
+        overallPassed = false;
+        failureReason = err instanceof Error ? err.message : String(err);
+    }
+    const finishedAt = (0, utils_1.timestamp)();
+    const durationMs = Date.now() - startTime;
+    const status = overallPassed ? 'passed' : 'failed';
+    core.info(`[smoke-test] ${phase} verification ${status} (${(0, utils_1.formatDuration)(durationMs)})`);
+    if (!overallPassed && failureReason) {
+        core.error(`[smoke-test] Failure: ${failureReason}`);
+    }
+    return {
+        status,
+        passed: overallPassed,
+        checks: checkResults,
+        rawCommandOutput,
+        startedAt,
+        finishedAt,
+        durationMs,
+        failureReason,
+        phase,
+    };
+}
+/**
+ * Execute a single smoke check with retries.
+ */
+async function runSingleCheck(check, retries, retryIntervalMs, deadline) {
+    core.info(`[smoke-test] Check "${check.name}": ${check.method} ${check.url}`);
+    core.info(`[smoke-test]   Expected: status=${check.expectedStatus}, timeout=${(0, utils_1.formatDuration)(check.timeoutMs)}`);
+    if (check.expectedBodyIncludes) {
+        core.info(`[smoke-test]   Expected body contains: "${(0, utils_1.truncate)(check.expectedBodyIncludes, 80)}"`);
     }
     let totalAttempts = 0;
     try {
         const result = await (0, utils_1.retry)(async () => {
             totalAttempts++;
-            return executeSingleSmokeTest(config, totalAttempts);
-        }, config.retries, 2000, // initial delay: 2s
-        'Smoke test');
+            if (Date.now() >= deadline) {
+                throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_TIMEOUT, 'Deadline exceeded');
+            }
+            return executeSingleFetch(check, totalAttempts);
+        }, retries, retryIntervalMs, `smoke:${check.name}`);
         return result;
     }
     catch (err) {
-        // All retries exhausted
         const errorMessage = err instanceof Error ? err.message : String(err);
-        core.error(`❌ Smoke test failed after ${totalAttempts} attempt(s): ${errorMessage}`);
+        core.error(`[smoke-test] Check "${check.name}" failed after ${totalAttempts} attempt(s): ${errorMessage}`);
         return {
+            name: check.name,
             passed: false,
             latencyMs: 0,
             error: errorMessage,
@@ -33922,42 +34251,42 @@ async function runSmokeTest(config) {
     }
 }
 /**
- * Execute a single smoke test attempt.
+ * Execute a single fetch request for a smoke check.
  */
-async function executeSingleSmokeTest(config, attempt) {
+async function executeSingleFetch(check, attempt) {
     const startTime = Date.now();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), check.timeoutMs);
     try {
-        const response = await fetch(config.url, {
-            method: 'GET',
+        const response = await fetch(check.url, {
+            method: check.method,
             signal: controller.signal,
             headers: {
-                'User-Agent': 'workers-release-promoter/1.0 (smoke-test)',
+                ...check.headers,
                 Accept: 'text/html,application/json,*/*',
             },
         });
         clearTimeout(timeoutId);
         const latencyMs = Date.now() - startTime;
         const body = await response.text();
-        core.info(`   Attempt ${attempt}: status=${response.status}, ` +
-            `latency=${(0, utils_1.formatDuration)(latencyMs)}, ` +
-            `body=${(0, utils_1.truncate)(body, 100).replace(/\n/g, ' ')}`);
+        core.info(`[smoke-test]   Attempt ${attempt}: status=${response.status}, ` +
+            `latency=${(0, utils_1.formatDuration)(latencyMs)}, body=${(0, utils_1.truncate)(body, 100).replace(/\n/g, ' ')}`);
         // Check status code
-        const statusMatch = response.status === config.expectedStatus;
+        const statusMatch = response.status === check.expectedStatus;
         if (!statusMatch) {
-            throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_FAILED, `Expected status ${config.expectedStatus}, got ${response.status}`);
+            throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_FAILED, `Expected status ${check.expectedStatus}, got ${response.status}`);
         }
         // Check body contains (if configured)
         let bodyMatch;
-        if (config.expectedBodyContains) {
-            bodyMatch = body.includes(config.expectedBodyContains);
+        if (check.expectedBodyIncludes) {
+            bodyMatch = body.includes(check.expectedBodyIncludes);
             if (!bodyMatch) {
-                throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_FAILED, `Response body does not contain expected string "${(0, utils_1.truncate)(config.expectedBodyContains, 50)}"`);
+                throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_FAILED, `Response body does not contain expected string "${(0, utils_1.truncate)(check.expectedBodyIncludes, 50)}"`);
             }
         }
-        core.info(`   ✅ Smoke test passed (attempt ${attempt}, ${(0, utils_1.formatDuration)(latencyMs)})`);
+        core.info(`[smoke-test]   PASS (attempt ${attempt}, ${(0, utils_1.formatDuration)(latencyMs)})`);
         return {
+            name: check.name,
             passed: true,
             statusCode: response.status,
             bodyMatch,
@@ -33968,14 +34297,41 @@ async function executeSingleSmokeTest(config, attempt) {
     }
     catch (err) {
         clearTimeout(timeoutId);
-        const latencyMs = Date.now() - startTime;
         if (err instanceof types_1.ActionError)
             throw err;
-        // Handle timeout specifically
         if (err instanceof Error && err.name === 'AbortError') {
-            throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_TIMEOUT, `Smoke test timed out after ${(0, utils_1.formatDuration)(config.timeoutMs)}`, err);
+            throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_TIMEOUT, `Smoke test timed out after ${(0, utils_1.formatDuration)(check.timeoutMs)}`, err);
         }
-        throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_FAILED, `Smoke test request failed: ${err instanceof Error ? err.message : String(err)} (${(0, utils_1.formatDuration)(latencyMs)})`, err);
+        throw new types_1.ActionError(types_1.ErrorCode.SMOKE_TEST_FAILED, `Smoke test request failed: ${err instanceof Error ? err.message : String(err)}`, err);
+    }
+}
+/**
+ * Run a custom smoke test command via subprocess.
+ */
+async function runCustomCommand(command) {
+    try {
+        const execaMod = await Promise.resolve().then(() => __importStar(__nccwpck_require__(8204)));
+        const execa = execaMod.default ?? execaMod;
+        const result = await execa('sh', ['-c', command], {
+            reject: false,
+            timeout: 120_000,
+        });
+        const output = `${result.stdout}\n${result.stderr}`.trim();
+        if (result.exitCode !== 0) {
+            return {
+                success: false,
+                output,
+                error: `Command exited with code ${result.exitCode}: ${result.stderr || result.stdout}`,
+            };
+        }
+        return { success: true, output };
+    }
+    catch (err) {
+        return {
+            success: false,
+            output: '',
+            error: err instanceof Error ? err.message : String(err),
+        };
     }
 }
 
@@ -34016,6 +34372,7 @@ var ErrorCode;
     // Smoke tests
     ErrorCode["SMOKE_TEST_FAILED"] = "SMOKE_TEST_FAILED";
     ErrorCode["SMOKE_TEST_TIMEOUT"] = "SMOKE_TEST_TIMEOUT";
+    ErrorCode["SMOKE_COMMAND_FAILED"] = "SMOKE_COMMAND_FAILED";
     // Inputs
     ErrorCode["INVALID_INPUT"] = "INVALID_INPUT";
     // GitHub
@@ -34101,11 +34458,6 @@ function sleep(ms) {
 }
 /**
  * Retry an async function with exponential backoff.
- *
- * @param fn        The async function to retry
- * @param retries   Maximum number of retry attempts
- * @param delayMs   Initial delay between retries (doubles each attempt)
- * @param label     Label for logging
  */
 async function retry(fn, retries, delayMs = 1000, label = 'operation') {
     let lastError;
@@ -34117,7 +34469,7 @@ async function retry(fn, retries, delayMs = 1000, label = 'operation') {
             lastError = err;
             if (attempt <= retries) {
                 const wait = delayMs * Math.pow(2, attempt - 1);
-                core.warning(`${label} failed (attempt ${attempt}/${retries + 1}), retrying in ${wait}ms…`);
+                core.warning(`${label} failed (attempt ${attempt}/${retries + 1}), retrying in ${wait}ms`);
                 await sleep(wait);
             }
         }
@@ -34132,7 +34484,6 @@ function timestamp() {
 }
 /**
  * Mask a secret value in GitHub Actions logs.
- * Wraps @actions/core.setSecret for convenience.
  */
 function maskSecret(value) {
     if (value && value.length > 0) {
@@ -34141,9 +34492,7 @@ function maskSecret(value) {
 }
 /**
  * Parse a comma-separated string of integers into a number array.
- * E.g., "10,50,100" → [10, 50, 100]
- *
- * @throws Error if any value is not a valid positive integer ≤ 100
+ * E.g., "10,50,100" -> [10, 50, 100]
  */
 function parsePercentages(input) {
     const raw = input
@@ -34175,7 +34524,6 @@ function parsePercentages(input) {
 }
 /**
  * Format a duration in milliseconds to a human-readable string.
- * E.g., 12345 → "12.3s", 1234 → "1.2s", 500 → "500ms"
  */
 function formatDuration(ms) {
     if (ms < 1000) {
@@ -34184,16 +34532,15 @@ function formatDuration(ms) {
     return `${(ms / 1000).toFixed(1)}s`;
 }
 /**
- * Safely truncate a string to a maximum length, appending "…" if truncated.
+ * Safely truncate a string to a maximum length, appending "..." if truncated.
  */
 function truncate(str, maxLength) {
     if (str.length <= maxLength)
         return str;
-    return str.slice(0, maxLength - 1) + '…';
+    return str.slice(0, maxLength - 1) + '...';
 }
 /**
  * Redact a sensitive value for log display.
- * Shows first 4 chars + "****" for strings longer than 8 chars.
  */
 function redact(value) {
     if (value.length <= 8)

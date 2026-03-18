@@ -1,8 +1,11 @@
 import { type SmokeTestConfig, type SmokeTestResult } from './types';
 /**
- * Run a smoke test against the deployed Worker.
+ * Run the full smoke test suite against the deployed Worker.
  *
- * Uses Node 20 native fetch (no extra HTTP dependencies).
- * Supports: expected status, body-contains check, timeout, retries with backoff.
+ * Supports:
+ *  - Multiple endpoint checks via native fetch (Node 20)
+ *  - Custom command execution
+ *  - Configurable retries, timeouts, and total deadline
+ *  - Two-phase verification (candidate vs post-promotion)
  */
-export declare function runSmokeTest(config: SmokeTestConfig): Promise<SmokeTestResult>;
+export declare function runSmokeTest(config: SmokeTestConfig, phase?: 'candidate' | 'post-promotion'): Promise<SmokeTestResult>;

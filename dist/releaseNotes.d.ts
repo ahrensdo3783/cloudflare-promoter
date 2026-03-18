@@ -6,4 +6,4 @@ export declare function buildReleaseNotesSection(result: PromotionResult, enviro
 /**
  * Build the deployment summary markdown for the GitHub Actions job summary.
  */
-export declare function buildJobSummary(result: PromotionResult, environment: string, tagName?: string): string;
+export declare function buildJobSummary(result: PromotionResult, environment: string, tagName?: string, strategy?: string): string;
