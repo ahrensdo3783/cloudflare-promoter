@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# TypeScript build output (intermediate)
+lib/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Test coverage
+coverage/
+
+# NOTE: dist/ is NOT ignored — it must be committed for GitHub Actions consumers

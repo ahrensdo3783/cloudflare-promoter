@@ -1,0 +1,87 @@
+# ──────────────────────────────────────────────────────────
+# Example: Deploy Cloudflare Worker on GitHub Release
+# ──────────────────────────────────────────────────────────
+#
+# This workflow triggers when a new release is published,
+# then uses workers-release-promoter to deploy the Worker
+# with gradual rollout and smoke-test gating.
+#
+# Prerequisites:
+#   1. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+#      as repository secrets.
+#   2. Ensure your Worker project has a wrangler.toml/wrangler.jsonc
+#      in the repository root (or adjust working-directory).
+
+name: Deploy Worker on Release
+
+on:
+  release:
+    types: [published]
+
+  # Optional: allow manual triggering for testing
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run in dry-run mode (validate only)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write       # To update release notes
+  deployments: write    # To create deployment statuses
+
+jobs:
+  deploy:
+    name: 🚀 Deploy to Cloudflare Workers
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── Checkout ──
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Setup Node.js ──
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # ── Install dependencies ──
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Deploy Worker ──
+      - name: Deploy Worker
+        id: deploy
+        uses: ./  # Use local action for testing; replace with your-org/workers-release-promoter@v1
+        with:
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          worker-name: my-worker
+          environment: production
+          smoke-test-url: https://my-worker.example.workers.dev/health
+          smoke-test-expected-status: '200'
+          smoke-test-expected-body-contains: '"status":"ok"'
+          smoke-test-retries: '3'
+          rollout-percentage: '10,50,100'
+          dry-run: ${{ github.event.inputs.dry-run || 'false' }}
+
+      # ── Post-deployment summary ──
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Deployment Results"
+          echo "- Result: ${{ steps.deploy.outputs.promotion-result }}"
+          echo "- Version: ${{ steps.deploy.outputs.version-id }}"
+          echo "- URL: ${{ steps.deploy.outputs.deployment-url }}"
+          echo "- Smoke test: ${{ steps.deploy.outputs.smoke-test-passed }}"
+          echo "- Rollback: ${{ steps.deploy.outputs.rollback-triggered }}"
+
+      # ── Notify on failure ──
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Deployment failed or was rolled back!"
+          echo "Check the job summary for details."

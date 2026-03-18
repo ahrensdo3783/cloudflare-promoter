@@ -1,0 +1,38 @@
+{
+  "name": "workers-release-promoter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A GitHub Action that turns a GitHub Release into a controlled Cloudflare Workers production promotion flow with staged rollout, smoke-test gating, rollback, and release-page deployment links.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "bundle": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+    "prebundle": "npm run build",
+    "lint": "eslint src/**/*.ts",
+    "test": "vitest run",
+    "check": "npm run lint && npm run test && npm run build && npm run bundle",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\""
+  },
+  "keywords": [
+    "github-action",
+    "cloudflare",
+    "workers",
+    "deployment",
+    "promotion",
+    "rollback",
+    "wrangler"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.10.1",
+    "@actions/github": "^6.0.0",
+    "execa": "^5.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@vercel/ncc": "^0.38.4",
+    "typescript": "^5.3.3"
+  }
+}

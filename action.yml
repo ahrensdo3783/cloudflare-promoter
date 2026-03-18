@@ -1,0 +1,74 @@
+name: 'Workers Release Promoter'
+description: 'Turn a GitHub Release into a controlled Cloudflare Workers production promotion flow with staged rollout, smoke-test gating, and automatic rollback.'
+author: ''
+
+branding:
+  icon: 'upload-cloud'
+  color: 'orange'
+
+inputs:
+  cloudflare-api-token:
+    description: 'Cloudflare API token with Workers deployment permissions. Can also be set via CLOUDFLARE_API_TOKEN env var.'
+    required: false
+  cloudflare-account-id:
+    description: 'Cloudflare account ID. Can also be set via CLOUDFLARE_ACCOUNT_ID env var.'
+    required: false
+  worker-name:
+    description: 'Name of the Cloudflare Worker to deploy. If omitted, resolved from wrangler config in working directory.'
+    required: false
+  working-directory:
+    description: 'Working directory for the Worker project (where wrangler config lives). Defaults to repository root.'
+    required: false
+    default: '.'
+  environment:
+    description: 'Wrangler environment to deploy to (e.g., "production", "staging").'
+    required: false
+    default: 'production'
+  smoke-test-url:
+    description: 'URL to hit for post-deploy smoke test. If omitted, smoke testing is skipped.'
+    required: false
+  smoke-test-expected-status:
+    description: 'Expected HTTP status code from smoke test URL.'
+    required: false
+    default: '200'
+  smoke-test-expected-body-contains:
+    description: 'String that the smoke test response body must contain.'
+    required: false
+  smoke-test-timeout:
+    description: 'Timeout in milliseconds for each smoke test request.'
+    required: false
+    default: '10000'
+  smoke-test-retries:
+    description: 'Number of retry attempts for smoke tests before failing.'
+    required: false
+    default: '3'
+  rollout-percentage:
+    description: 'Comma-separated rollout percentages for gradual deployment (e.g., "10,50,100"). Use "100" for immediate full rollout.'
+    required: false
+    default: '100'
+  dry-run:
+    description: 'If true, validate inputs and print the promotion plan without deploying.'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for updating release notes and creating deployment statuses. Defaults to the automatic GITHUB_TOKEN.'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  deployment-id:
+    description: 'Cloudflare deployment ID of the promoted version.'
+  version-id:
+    description: 'Cloudflare Worker version ID that was deployed.'
+  deployment-url:
+    description: 'URL of the deployed Worker.'
+  smoke-test-passed:
+    description: 'Whether smoke tests passed (true/false). Empty if skipped.'
+  rollback-triggered:
+    description: 'Whether an automatic rollback was triggered (true/false).'
+  promotion-result:
+    description: 'Overall promotion result: "success", "rolled-back", or "failed".'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
