@@ -10,14 +10,14 @@ A marketplace-quality GitHub Action that turns a **GitHub Release** into a contr
 
 ## Features
 
-- **🚀 Release-driven deployment** — triggers on `release.published` (supports `workflow_dispatch`, `push`, `merge_group`)
-- **📈 Gradual rollout** — split traffic with configurable percentage steps (e.g., `10,50,100`)
-- **🧪 Smoke-test gating** — native `fetch`-based checks between rollout steps
-- **⏪ Automatic rollback** — reverts to the previous stable version on failure
-- **📝 Release annotations** — appends deployment details to the GitHub Release body
-- **🔍 Dry-run mode** — validate everything without deploying
-- **📊 Job summaries** — rich GitHub Actions job summary with rollout tables
-- **🔒 Secure** — secrets masking, least-privilege tokens, no hardcoded credentials
+- **Release-driven deployment** — triggers on `release.published` (supports `workflow_dispatch`, `push`, `merge_group`)
+- ** Gradual rollout** — split traffic with configurable percentage steps (e.g., `10,50,100`)
+- ** Smoke-test gating** — native `fetch`-based checks between rollout steps
+- ** Automatic rollback** — reverts to the previous stable version on failure
+- ** Release annotations** — appends deployment details to the GitHub Release body
+- ** Dry-run mode** — validate everything without deploying
+- ** Job summaries** — rich GitHub Actions job summary with rollout tables
+- ** Secure** — secrets masking, least-privilege tokens, no hardcoded credentials
 
 ---
 
