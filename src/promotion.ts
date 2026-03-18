@@ -17,7 +17,7 @@ import {
 } from './types';
 import * as cloudflare from './cloudflare';
 import { runSmokeTest } from './smoke';
-import { timestamp, sleep, formatDuration } from './utils';
+import { timestamp, sleep } from './utils';
 
 // ─── Lifecycle Helpers ───────────────────────────────────
 
@@ -167,7 +167,7 @@ export async function executePromotion(
 
 async function executeImmediate(
   inputs: ActionInputs,
-  plan: PromotionPlan,
+  _plan: PromotionPlan,
   result: PromotionResult,
   lifecycle: LifecycleTracker,
   releaseContext?: ReleaseContext,
@@ -434,7 +434,7 @@ async function executeStagingOnly(
 async function runCandidateSmokeTest(
   inputs: ActionInputs,
   lifecycle: LifecycleTracker,
-  deploy: DeployResult,
+  _deploy: DeployResult,
 ): Promise<import('./types').SmokeTestResult> {
   core.info('');
   core.info('='.repeat(50));
@@ -456,7 +456,7 @@ async function runCandidateSmokeTest(
 async function runPostPromotionSmokeTest(
   inputs: ActionInputs,
   lifecycle: LifecycleTracker,
-  deploy: DeployResult,
+  _deploy: DeployResult,
 ): Promise<import('./types').SmokeTestResult> {
   core.info('');
   core.info('='.repeat(50));
