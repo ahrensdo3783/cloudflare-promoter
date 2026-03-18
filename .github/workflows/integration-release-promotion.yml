@@ -73,8 +73,18 @@ jobs:
             ready=false
           fi
 
+          if [ "${{ secrets.CLOUDFLARE_API_TOKEN }}" = "REPLACE_WITH_REAL_CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN is still set to placeholder text."
+            ready=false
+          fi
+
           if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
             echo "::warning::Missing required secret: CLOUDFLARE_ACCOUNT_ID"
+            ready=false
+          fi
+
+          if [ "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" = "REPLACE_WITH_REAL_CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::warning::CLOUDFLARE_ACCOUNT_ID is still set to placeholder text."
             ready=false
           fi
 
