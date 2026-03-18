@@ -48,8 +48,12 @@ export function buildReleaseNotesSection(
     smokeTestPassed,
     promotionResult,
     promotionStrategy: result.deploy ? (result.state === 'staging-only' ? 'staging-only' : undefined) : undefined,
-    rollbackTriggered: result.state === 'rolled-back',
+    promotionStatus: result.promotionStatus || undefined,
+    rollbackTriggered: result.rollback?.attempted || false,
     rollbackVersionId: result.rollback?.rolledBackToVersionId,
+    rollbackSucceeded: result.rollback?.success,
+    postRollbackHealthy: result.rollback?.postRollbackHealthy,
+    failurePhase: result.failure?.phase,
     releaseTag: result.deploy?.releaseTag,
     gitSha: result.deploy?.gitSha,
     sourceTrigger: result.deploy?.sourceTrigger,
@@ -175,11 +179,43 @@ export function buildJobSummary(
   if (result.rollback) {
     lines.push('### Rollback');
     lines.push('');
-    lines.push(
-      result.rollback.success
-        ? `Rolled back to version \`${result.rollback.rolledBackToVersionId}\``
-        : `Rollback failed: ${result.rollback.message}`,
-    );
+
+    lines.push('| Property | Value |');
+    lines.push('| -------- | ----- |');
+    lines.push(`| **Attempted** | ${result.rollback.attempted ? 'Yes' : 'No'} |`);
+    lines.push(`| **Succeeded** | ${result.rollback.success ? 'Yes' : 'No'} |`);
+    if (result.rollback.rolledBackToVersionId) {
+      lines.push(`| **Target Version** | \`${result.rollback.rolledBackToVersionId}\` |`);
+    }
+    if (result.rollback.rolledBackAt) {
+      lines.push(`| **Rolled Back At** | ${result.rollback.rolledBackAt} |`);
+    }
+    if (result.rollback.postRollbackHealthy !== undefined) {
+      lines.push(`| **Post-Rollback Healthy** | ${result.rollback.postRollbackHealthy ? 'Yes' : 'No'} |`);
+    }
+    if (result.rollback.details) {
+      lines.push(`| **Details** | ${result.rollback.details} |`);
+    }
+    lines.push('');
+  }
+
+  // Failure analysis
+  if (result.failure) {
+    lines.push('### Failure Analysis');
+    lines.push('');
+    lines.push('| Property | Value |');
+    lines.push('| -------- | ----- |');
+    lines.push(`| **Phase** | \`${result.failure.phase}\` |`);
+    if (result.failure.failedAtPercent !== undefined) {
+      lines.push(`| **Failed At** | ${result.failure.failedAtPercent}% traffic |`);
+    }
+    lines.push(`| **Reason** | ${result.failure.reason} |`);
+    lines.push(`| **Production Traffic Affected** | ${result.failure.productionTrafficAffected ? 'Yes' : 'No'} |`);
+    lines.push(`| **Rollback Applicable** | ${result.failure.rollbackApplicable ? 'Yes' : 'No'} |`);
+    lines.push(`| **Rollback Attempted** | ${result.failure.rollbackAttempted ? 'Yes' : 'No'} |`);
+    if (result.failure.rollbackSucceeded !== undefined) {
+      lines.push(`| **Rollback Succeeded** | ${result.failure.rollbackSucceeded ? 'Yes' : 'No'} |`);
+    }
     lines.push('');
   }
 

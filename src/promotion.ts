@@ -9,11 +9,13 @@ import {
   type DeploymentLifecycle,
   type DeployResult,
   type LifecycleTracker,
+  type PromotionFailure,
   type PromotionPlan,
   type PromotionResult,
   type PromotionStep,
   type PromotionStepResult,
   type ReleaseContext,
+  type RollbackResult,
 } from './types';
 import * as cloudflare from './cloudflare';
 import { runSmokeTest } from './smoke';
@@ -92,9 +94,10 @@ export function buildPromotionPlan(inputs: ActionInputs): PromotionPlan {
  *  5. For immediate/gradual:
  *     a. Execute each promotion step
  *     b. Run post-step smoke tests (if enabled)
- *     c. On failure -> rollback to stable
+ *     c. On failure -> rollback to stable (if auto-rollback enabled)
  *  6. Run post-promotion verification (if enabled)
- *  7. Return the overall result
+ *  7. Compute granular PromotionStatus
+ *  8. Return the overall result
  */
 export async function executePromotion(
   inputs: ActionInputs,
@@ -122,6 +125,14 @@ export async function executePromotion(
     const previousStableVersionId = await cloudflare.lookupCurrentStableVersion(inputs);
     result.previousStableVersionId = previousStableVersionId || undefined;
 
+    if (previousStableVersionId && inputs.autoRollback) {
+      core.info(`[rollback] Rollback target recorded: ${previousStableVersionId}`);
+    } else if (!previousStableVersionId) {
+      core.info('[rollback] No previous version found -- rollback will not be available');
+    } else if (!inputs.autoRollback) {
+      core.info('[rollback] Auto-rollback is disabled by configuration');
+    }
+
     transition(lifecycle, 'candidate_deploy_started');
 
     // ── Phase 2: Deploy / Upload ──
@@ -133,32 +144,45 @@ export async function executePromotion(
       return await executeStagingOnly(inputs, result, lifecycle, releaseContext, previousStableVersionId);
     }
   } catch (err) {
+    // ── Unexpected error -- emergency recovery ──
     result.state = 'failed';
     result.error = err instanceof Error ? err.message : String(err);
     result.completedAt = timestamp();
 
-    // Attempt emergency rollback
-    if (result.previousStableVersionId) {
-      core.warning('[promotion] Unexpected error -- attempting emergency rollback');
-      transition(lifecycle, 'rollback_in_progress');
-      try {
-        const rollbackResult = await cloudflare.rollbackToVersion(
-          result.previousStableVersionId,
-          inputs,
-        );
-        result.rollback = rollbackResult;
+    const failure: PromotionFailure = {
+      phase: 'unknown',
+      reason: result.error,
+      productionTrafficAffected: lifecycle.current === 'promotion_in_progress' || lifecycle.current === 'promoted',
+      rollbackApplicable: !!result.previousStableVersionId && inputs.autoRollback,
+      rollbackAttempted: false,
+    };
+
+    if (result.previousStableVersionId && inputs.autoRollback) {
+      core.warning('[rollback] Unexpected error -- attempting emergency rollback');
+      const rollbackResult = await performRollback(
+        result.previousStableVersionId,
+        inputs,
+        lifecycle,
+      );
+      result.rollback = rollbackResult;
+      failure.rollbackAttempted = true;
+      failure.rollbackSucceeded = rollbackResult.success;
+
+      if (rollbackResult.success) {
         result.state = 'rolled-back';
-        transition(lifecycle, 'rolled_back');
-      } catch (rollbackErr) {
-        core.error(
-          `[promotion] Emergency rollback also failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
-        );
-        transition(lifecycle, 'failed');
+        result.promotionStatus = 'failed-rollback-succeeded';
+      } else {
+        result.promotionStatus = 'failed-rollback-failed';
       }
+    } else if (result.previousStableVersionId && !inputs.autoRollback) {
+      core.warning('[rollback] Auto-rollback is disabled -- skipping recovery');
+      result.promotionStatus = 'failed-rollback-disabled';
     } else {
-      transition(lifecycle, 'failed');
+      core.warning('[rollback] No previous version available for rollback');
+      result.promotionStatus = 'failed-no-rollback';
     }
 
+    result.failure = failure;
     return result;
   }
 }
@@ -185,7 +209,16 @@ async function executeImmediate(
     result.state = 'failed';
     result.error = `Deployment failed: ${deployResult.stderr}`;
     result.completedAt = timestamp();
+    result.failure = {
+      phase: 'candidate-deploy',
+      reason: result.error,
+      productionTrafficAffected: false, // Deploy failed, no traffic touched
+      rollbackApplicable: false, // Nothing changed, rollback unnecessary
+      rollbackAttempted: false,
+    };
+    result.promotionStatus = 'failed-no-rollback';
     transition(lifecycle, 'failed');
+    core.info('[rollback] Deploy failed before any traffic change -- rollback not needed');
     return result;
   }
 
@@ -194,7 +227,7 @@ async function executeImmediate(
 
   // ── Candidate smoke test ──
   if (inputs.smokeTest) {
-    const smokeResult = await runCandidateSmokeTest(inputs, lifecycle, deployResult);
+    const smokeResult = await runCandidateSmokeTest(inputs, lifecycle);
     result.candidateSmokeResult = smokeResult;
 
     if (!smokeResult.passed) {
@@ -205,9 +238,11 @@ async function executeImmediate(
         smokeTest: smokeResult,
       });
 
-      return await handleSmokeFailure(
+      return await handleFailure(
         inputs, result, lifecycle, previousStableVersionId,
+        'candidate-smoke',
         `Candidate smoke test failed: ${smokeResult.failureReason || 'Unexpected failure'}`,
+        true, // Production traffic was affected (immediate mode deployed to 100%)
       );
     }
 
@@ -225,13 +260,15 @@ async function executeImmediate(
 
   // ── Post-promotion smoke test ──
   if (inputs.smokeTest) {
-    const postSmokeResult = await runPostPromotionSmokeTest(inputs, lifecycle, deployResult);
+    const postSmokeResult = await runPostPromotionSmokeTest(inputs, lifecycle);
     result.postPromotionSmokeResult = postSmokeResult;
 
     if (!postSmokeResult.passed) {
-      return await handleSmokeFailure(
+      return await handleFailure(
         inputs, result, lifecycle, previousStableVersionId,
+        'post-promotion-smoke',
         `Post-promotion smoke test failed: ${postSmokeResult.failureReason || 'Unexpected failure'}`,
+        true,
       );
     }
 
@@ -239,6 +276,7 @@ async function executeImmediate(
   }
 
   result.state = 'complete';
+  result.promotionStatus = 'success';
   result.completedAt = timestamp();
   transition(lifecycle, 'promoted');
   return result;
@@ -281,13 +319,15 @@ async function executeGradual(
 
   // ── Candidate smoke test (before any promotion) ──
   if (inputs.smokeTest && inputs.smokeTest.checks.length > 0) {
-    const smokeResult = await runCandidateSmokeTest(inputs, lifecycle, result.deploy);
+    const smokeResult = await runCandidateSmokeTest(inputs, lifecycle);
     result.candidateSmokeResult = smokeResult;
 
     if (!smokeResult.passed) {
-      return await handleSmokeFailure(
+      return await handleFailure(
         inputs, result, lifecycle, previousStableVersionId,
+        'candidate-smoke',
         `Candidate smoke test failed before gradual rollout: ${smokeResult.failureReason || 'Unexpected failure'}`,
+        false, // No production traffic affected yet
       );
     }
 
@@ -313,12 +353,15 @@ async function executeGradual(
 
     // Promotion step failed
     if (!stepResult.success) {
-      core.error(`[promotion] Step failed at ${step.percent}% -- initiating rollback`);
+      core.error(`[promotion] Step failed at ${step.percent}% -- initiating recovery`);
       result.stepResults.push(stepResult);
 
-      return await handleSmokeFailure(
+      return await handleFailure(
         inputs, result, lifecycle, previousStableVersionId,
+        'promotion-step',
         `Promotion failed at ${step.percent}%: ${stepResult.message}`,
+        true, // Some traffic may have shifted
+        step.percent,
       );
     }
 
@@ -332,13 +375,16 @@ async function executeGradual(
       stepResult.smokeTest = smokeResult;
 
       if (!smokeResult.passed) {
-        core.error(`[promotion] Smoke test failed at ${step.percent}% -- initiating rollback`);
+        core.error(`[promotion] Smoke test failed at ${step.percent}% -- initiating recovery`);
         stepResult.success = false;
         result.stepResults.push(stepResult);
 
-        return await handleSmokeFailure(
+        return await handleFailure(
           inputs, result, lifecycle, previousStableVersionId,
+          'post-promotion-smoke',
           `Smoke test failed at ${step.percent}%: ${smokeResult.failureReason || 'Unexpected failure'}`,
+          true,
+          step.percent,
         );
       }
     } else if (step.pauseAfterSeconds > 0) {
@@ -352,13 +398,15 @@ async function executeGradual(
 
   // ── Post-promotion verification ──
   if (inputs.smokeTest) {
-    const postSmokeResult = await runPostPromotionSmokeTest(inputs, lifecycle, result.deploy);
+    const postSmokeResult = await runPostPromotionSmokeTest(inputs, lifecycle);
     result.postPromotionSmokeResult = postSmokeResult;
 
     if (!postSmokeResult.passed) {
-      return await handleSmokeFailure(
+      return await handleFailure(
         inputs, result, lifecycle, previousStableVersionId,
+        'post-promotion-smoke',
         `Post-promotion smoke test failed: ${postSmokeResult.failureReason || 'Unexpected failure'}`,
+        true,
       );
     }
 
@@ -366,6 +414,7 @@ async function executeGradual(
   }
 
   result.state = 'complete';
+  result.promotionStatus = 'success';
   result.completedAt = timestamp();
   transition(lifecycle, 'promoted');
   return result;
@@ -378,7 +427,7 @@ async function executeStagingOnly(
   result: PromotionResult,
   lifecycle: LifecycleTracker,
   releaseContext?: ReleaseContext,
-  previousStableVersionId?: string,
+  _previousStableVersionId?: string,
 ): Promise<PromotionResult> {
   core.info('');
   core.info('='.repeat(50));
@@ -393,23 +442,41 @@ async function executeStagingOnly(
     result.state = 'failed';
     result.error = `Candidate deployment failed: ${deployResult.stderr}`;
     result.completedAt = timestamp();
+    result.failure = {
+      phase: 'candidate-deploy',
+      reason: result.error,
+      productionTrafficAffected: false,
+      rollbackApplicable: false,
+      rollbackAttempted: false,
+    };
+    result.promotionStatus = 'failed';
     transition(lifecycle, 'failed');
+    core.info('[rollback] Staging-only deploy failed -- no production traffic affected, rollback not needed');
     return result;
   }
 
   transition(lifecycle, 'candidate_deployed');
-  logCandidateSummary(deployResult, previousStableVersionId);
+  logCandidateSummary(deployResult, _previousStableVersionId);
 
   // Run candidate verification
   if (inputs.smokeTest) {
-    const smokeResult = await runCandidateSmokeTest(inputs, lifecycle, deployResult);
+    const smokeResult = await runCandidateSmokeTest(inputs, lifecycle);
     result.candidateSmokeResult = smokeResult;
 
     if (!smokeResult.passed && inputs.smokeTest.required) {
       result.state = 'failed';
       result.error = `Candidate verification failed: ${smokeResult.failureReason}`;
       result.completedAt = timestamp();
+      result.failure = {
+        phase: 'candidate-smoke',
+        reason: result.error,
+        productionTrafficAffected: false, // staging-only, no prod traffic
+        rollbackApplicable: false, // No production rollback needed
+        rollbackAttempted: false,
+      };
+      result.promotionStatus = 'failed';
       transition(lifecycle, 'failed');
+      core.info('[rollback] Staging-only smoke failure -- no production traffic affected');
       return result;
     }
 
@@ -420,6 +487,7 @@ async function executeStagingOnly(
 
   // Terminal state: candidate verified only
   result.state = 'staging-only';
+  result.promotionStatus = 'staging-only';
   result.completedAt = timestamp();
   transition(lifecycle, 'candidate_verified_only');
   core.notice('Staging-only deployment complete. Candidate is ready for manual promotion.');
@@ -434,7 +502,6 @@ async function executeStagingOnly(
 async function runCandidateSmokeTest(
   inputs: ActionInputs,
   lifecycle: LifecycleTracker,
-  _deploy: DeployResult,
 ): Promise<import('./types').SmokeTestResult> {
   core.info('');
   core.info('='.repeat(50));
@@ -456,7 +523,6 @@ async function runCandidateSmokeTest(
 async function runPostPromotionSmokeTest(
   inputs: ActionInputs,
   lifecycle: LifecycleTracker,
-  _deploy: DeployResult,
 ): Promise<import('./types').SmokeTestResult> {
   core.info('');
   core.info('='.repeat(50));
@@ -473,33 +539,139 @@ async function runPostPromotionSmokeTest(
 }
 
 /**
- * Handle smoke test or promotion failure with rollback.
+ * Handle promotion or smoke test failure with structured context and optional rollback.
+ *
+ * This is the central failure handler that:
+ *  1. Creates a PromotionFailure with full context
+ *  2. Decides whether rollback is applicable and enabled
+ *  3. Performs rollback (if applicable)
+ *  4. Runs post-rollback health check
+ *  5. Sets granular PromotionStatus
  */
-async function handleSmokeFailure(
+async function handleFailure(
   inputs: ActionInputs,
   result: PromotionResult,
   lifecycle: LifecycleTracker,
-  previousStableVersionId?: string,
-  errorMessage?: string,
+  previousStableVersionId: string | undefined,
+  failurePhase: PromotionFailure['phase'],
+  errorMessage: string,
+  productionTrafficAffected: boolean,
+  failedAtPercent?: number,
 ): Promise<PromotionResult> {
-  if (previousStableVersionId) {
-    transition(lifecycle, 'rollback_in_progress');
-    const rollbackResult = await cloudflare.rollbackToVersion(
-      previousStableVersionId,
-      inputs,
-    );
+  const rollbackApplicable = !!previousStableVersionId && productionTrafficAffected;
+  const rollbackEnabled = inputs.autoRollback;
+
+  const failure: PromotionFailure = {
+    phase: failurePhase,
+    failedAtPercent,
+    reason: errorMessage,
+    productionTrafficAffected,
+    rollbackApplicable,
+    rollbackAttempted: false,
+  };
+
+  core.info('');
+  core.info('-'.repeat(50));
+  core.info('  Failure Analysis');
+  core.info('-'.repeat(50));
+  core.info(`  Phase:                 ${failurePhase}`);
+  core.info(`  Reason:                ${errorMessage}`);
+  core.info(`  Traffic affected:      ${productionTrafficAffected}`);
+  core.info(`  Rollback applicable:   ${rollbackApplicable}`);
+  core.info(`  Auto-rollback enabled: ${rollbackEnabled}`);
+  if (failedAtPercent !== undefined) {
+    core.info(`  Failed at percentage:  ${failedAtPercent}%`);
+  }
+  core.info('-'.repeat(50));
+
+  // Decide rollback action
+  if (rollbackApplicable && rollbackEnabled && previousStableVersionId) {
+    // ── Perform rollback ──
+    core.info('');
+    core.info('='.repeat(50));
+    core.info('  Recovery Phase: Automatic Rollback');
+    core.info('='.repeat(50));
+    core.info(`[rollback] Rolling back to stable version: ${previousStableVersionId}`);
+
+    const rollbackResult = await performRollback(previousStableVersionId, inputs, lifecycle);
     result.rollback = rollbackResult;
-    result.state = 'rolled-back';
+    failure.rollbackAttempted = true;
+    failure.rollbackSucceeded = rollbackResult.success;
+
+    if (rollbackResult.success) {
+      result.state = 'rolled-back';
+      result.promotionStatus = 'failed-rollback-succeeded';
+      core.info(`[rollback] Recovery successful -- production restored to ${previousStableVersionId}`);
+    } else {
+      result.state = 'failed';
+      result.promotionStatus = 'failed-rollback-failed';
+      core.error(`[rollback] CRITICAL: Rollback failed -- production state may be inconsistent`);
+      core.error(`[rollback] Manual intervention required: restore version ${previousStableVersionId}`);
+    }
+  } else if (rollbackApplicable && !rollbackEnabled) {
+    // ── Rollback applicable but disabled ──
+    core.warning('[rollback] Rollback is applicable but auto-rollback is DISABLED');
+    core.warning(`[rollback] To restore: manually deploy version ${previousStableVersionId}`);
+    result.state = 'failed';
+    result.promotionStatus = 'failed-rollback-disabled';
+  } else if (!productionTrafficAffected) {
+    // ── No production traffic was affected ──
+    core.info('[rollback] No production traffic was affected -- rollback not needed');
+    result.state = 'failed';
+    result.promotionStatus = 'failed-no-rollback';
+  } else {
+    // ── No rollback target ──
+    core.warning('[rollback] No previous stable version -- cannot rollback');
+    result.state = 'failed';
+    result.promotionStatus = 'failed-no-rollback';
+  }
+
+  result.failure = failure;
+  result.error = errorMessage;
+  result.completedAt = timestamp();
+  return result;
+}
+
+/**
+ * Perform rollback to a specific version with post-rollback health check.
+ */
+async function performRollback(
+  versionId: string,
+  inputs: ActionInputs,
+  lifecycle: LifecycleTracker,
+): Promise<RollbackResult> {
+  transition(lifecycle, 'rollback_in_progress');
+
+  const rollbackResult = await cloudflare.rollbackToVersion(versionId, inputs);
+
+  // Post-rollback health check (if smoke tests are configured)
+  if (rollbackResult.success && inputs.smokeTest && inputs.smokeTest.checks.length > 0) {
+    core.info('[rollback] Running post-rollback health check');
+    await sleep(5000); // Wait for rollback to propagate
+
+    try {
+      const healthResult = await runSmokeTest(inputs.smokeTest, 'post-promotion');
+      rollbackResult.postRollbackHealthy = healthResult.passed;
+
+      if (healthResult.passed) {
+        core.info('[rollback] Post-rollback health check PASSED -- service is healthy');
+      } else {
+        core.error('[rollback] Post-rollback health check FAILED -- service may be unhealthy');
+        core.error(`[rollback] Failure reason: ${healthResult.failureReason || 'Unknown'}`);
+      }
+    } catch (err) {
+      core.warning(`[rollback] Post-rollback health check error: ${err instanceof Error ? err.message : String(err)}`);
+      rollbackResult.postRollbackHealthy = undefined;
+    }
+  }
+
+  if (rollbackResult.success) {
     transition(lifecycle, 'rolled_back');
   } else {
-    core.warning('[promotion] No previous version available for rollback');
-    result.state = 'failed';
     transition(lifecycle, 'failed');
   }
 
-  result.error = errorMessage || 'Verification failed';
-  result.completedAt = timestamp();
-  return result;
+  return rollbackResult;
 }
 
 /**

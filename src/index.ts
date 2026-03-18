@@ -120,17 +120,15 @@ async function run(): Promise<void> {
     core.setOutput('version-id', result.deploy?.versionId || '');
 
     // Rollback
-    core.setOutput('rollback-triggered', String(result.state === 'rolled-back'));
+    core.setOutput('rollback-triggered', String(result.rollback?.attempted || false));
     core.setOutput('rollback-version-id', result.rollback?.rolledBackToVersionId || '');
+    core.setOutput('rollback-succeeded', String(result.rollback?.success || false));
+    core.setOutput('post-rollback-healthy', result.rollback?.postRollbackHealthy !== undefined
+      ? String(result.rollback.postRollbackHealthy)
+      : '');
 
-    // Promotion status
-    const promotionStatus = result.state === 'complete'
-      ? 'success'
-      : result.state === 'staging-only'
-        ? 'staging-only'
-        : result.state === 'rolled-back'
-          ? 'rolled-back'
-          : 'failed';
+    // Promotion status (granular)
+    const promotionStatus = result.promotionStatus || 'failed';
     core.setOutput('promotion-result', promotionStatus);
     core.setOutput('promotion-status', promotionStatus);
 
@@ -199,13 +197,37 @@ async function run(): Promise<void> {
       core.info(`  [staging-only] Candidate deployed and verified in ${elapsed}s`);
       core.info('='.repeat(50));
     } else if (result.state === 'rolled-back') {
-      core.info(`  [rolled-back] Promotion rolled back after ${elapsed}s`);
+      core.info(`  [rolled-back] Promotion failed, rolled back in ${elapsed}s`);
       core.info('='.repeat(50));
-      core.setFailed(`Deployment rolled back: ${result.error || 'Unknown error'}`);
+
+      // Build informative failure message
+      const failMsg = [
+        `Release ${releaseContext.tagName}`,
+        result.deploy?.versionId ? `deployed candidate version ${result.deploy.versionId}` : undefined,
+        result.failure?.phase ? `failed during phase: ${result.failure.phase}` : undefined,
+        result.failure?.failedAtPercent !== undefined ? `at ${result.failure.failedAtPercent}% traffic` : undefined,
+        result.rollback?.rolledBackToVersionId ? `rollback to version ${result.rollback.rolledBackToVersionId} succeeded` : undefined,
+        result.rollback?.rolledBackAt ? `at ${result.rollback.rolledBackAt}` : undefined,
+      ].filter(Boolean).join(', ');
+
+      core.setFailed(failMsg);
     } else {
       core.info(`  [failed] Promotion failed after ${elapsed}s`);
       core.info('='.repeat(50));
-      core.setFailed(`Deployment failed: ${result.error || 'Unknown error'}`);
+
+      // Distinguish failure modes
+      if (result.promotionStatus === 'failed-rollback-failed') {
+        core.error('CRITICAL: Rollback also failed -- manual intervention required');
+      } else if (result.promotionStatus === 'failed-rollback-disabled') {
+        core.warning('Auto-rollback was disabled. Manual rollback may be needed.');
+      }
+
+      const failMsg = [
+        `Deployment failed: ${result.error || 'Unknown error'}`,
+        result.promotionStatus ? `(status: ${result.promotionStatus})` : undefined,
+      ].filter(Boolean).join(' ');
+
+      core.setFailed(failMsg);
     }
   } catch (err) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

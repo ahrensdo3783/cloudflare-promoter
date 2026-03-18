@@ -331,8 +331,11 @@ export async function rollbackToVersion(
   if (result.exitCode === 0) {
     core.info(`[rollback] Successfully rolled back to version ${versionId}`);
     return {
+      attempted: true,
       success: true,
       rolledBackToVersionId: versionId,
+      rolledBackAt: timestamp(),
+      details: `Rolled back to version ${versionId} -- production traffic restored to known good state`,
       message: `Rolled back to version ${versionId}`,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -341,8 +344,11 @@ export async function rollbackToVersion(
 
   core.error(`[rollback] Rollback failed: ${result.stderr || result.stdout}`);
   return {
+    attempted: true,
     success: false,
     rolledBackToVersionId: versionId,
+    rolledBackAt: timestamp(),
+    details: `Rollback to version ${versionId} FAILED -- production state may be inconsistent`,
     message: `Rollback to ${versionId} failed: ${result.stderr || result.stdout}`,
     stdout: result.stdout,
     stderr: result.stderr,

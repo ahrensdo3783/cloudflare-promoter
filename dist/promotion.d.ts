@@ -14,8 +14,9 @@ export declare function buildPromotionPlan(inputs: ActionInputs): PromotionPlan;
  *  5. For immediate/gradual:
  *     a. Execute each promotion step
  *     b. Run post-step smoke tests (if enabled)
- *     c. On failure -> rollback to stable
+ *     c. On failure -> rollback to stable (if auto-rollback enabled)
  *  6. Run post-promotion verification (if enabled)
- *  7. Return the overall result
+ *  7. Compute granular PromotionStatus
+ *  8. Return the overall result
  */
 export declare function executePromotion(inputs: ActionInputs, plan: PromotionPlan, releaseContext?: ReleaseContext): Promise<PromotionResult>;

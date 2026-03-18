@@ -213,6 +213,13 @@ export function getInputs(): ActionInputs {
     core.info(`[inputs] Step wait: ${gradualStepWaitSeconds}s, post-step smoke: ${postStepSmokeTests}`);
   }
 
+  // Auto-rollback
+  const autoRollbackInput = core.getInput('auto-rollback') || 'true';
+  const autoRollback = autoRollbackInput.toLowerCase() !== 'false';
+  if (!autoRollback) {
+    core.warning('[inputs] Automatic rollback is DISABLED -- failures will not trigger version restoration');
+  }
+
   // Dry run
   const dryRunInput = core.getInput('dry-run') || 'false';
   const dryRun = dryRunInput.toLowerCase() === 'true';
@@ -233,6 +240,7 @@ export function getInputs(): ActionInputs {
     promotionStrategy,
     gradualStepWaitSeconds,
     postStepSmokeTests,
+    autoRollback,
     dryRun,
     githubToken,
   };

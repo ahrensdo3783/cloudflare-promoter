@@ -90,6 +90,8 @@ export interface ActionInputs {
     gradualStepWaitSeconds: number;
     /** Whether to run smoke tests after each gradual step */
     postStepSmokeTests: boolean;
+    /** Whether automatic rollback is enabled on failure */
+    autoRollback: boolean;
     /** Validate only, don't deploy */
     dryRun: boolean;
     /** GitHub token for API operations */
@@ -165,10 +167,18 @@ export interface PromotionStepResult {
     smokeTest?: SmokeTestResult;
 }
 export interface RollbackResult {
+    /** Whether rollback was attempted */
+    attempted: boolean;
     /** Whether the rollback succeeded */
     success: boolean;
     /** Version ID rolled back to */
     rolledBackToVersionId?: string;
+    /** ISO-8601 timestamp when rollback completed */
+    rolledBackAt?: string;
+    /** Whether post-rollback health check passed */
+    postRollbackHealthy?: boolean;
+    /** Detailed description of the rollback */
+    details?: string;
     /** Message or error */
     message: string;
     /** Raw stdout */
@@ -176,6 +186,31 @@ export interface RollbackResult {
     /** Raw stderr */
     stderr: string;
 }
+/**
+ * Structured failure context for promotion failures.
+ * Captures exactly where, why, and what recovery was attempted.
+ */
+export interface PromotionFailure {
+    /** The phase where failure occurred */
+    phase: 'candidate-deploy' | 'candidate-smoke' | 'promotion-step' | 'post-promotion-smoke' | 'unknown';
+    /** The promotion step percentage where failure occurred (if applicable) */
+    failedAtPercent?: number;
+    /** Human-readable reason */
+    reason: string;
+    /** Whether production traffic was affected before failure */
+    productionTrafficAffected: boolean;
+    /** Whether rollback was applicable */
+    rollbackApplicable: boolean;
+    /** Whether rollback was attempted */
+    rollbackAttempted: boolean;
+    /** Whether rollback succeeded */
+    rollbackSucceeded?: boolean;
+}
+/**
+ * Granular promotion status for downstream consumers.
+ * Distinguishes between failure modes for operational clarity.
+ */
+export type PromotionStatus = 'success' | 'staging-only' | 'dry-run' | 'failed-no-rollback' | 'failed-rollback-succeeded' | 'failed-rollback-failed' | 'failed-rollback-disabled' | 'failed';
 /** Result for a single smoke check */
 export interface SmokeCheckResult {
     /** Check name */
@@ -264,8 +299,12 @@ export interface PromotionResult {
     stepResults: PromotionStepResult[];
     /** Rollback result, if applicable */
     rollback?: RollbackResult;
+    /** Structured failure context */
+    failure?: PromotionFailure;
     /** Overall error message, if failed */
     error?: string;
+    /** Granular promotion status */
+    promotionStatus?: PromotionStatus;
     /** Version ID of the previous stable version (captured before deployment) */
     previousStableVersionId?: string;
     /** Deployment lifecycle tracker */
@@ -296,10 +335,18 @@ export interface ReleaseNotesSection {
     promotionResult: string;
     /** Promotion strategy used */
     promotionStrategy?: string;
+    /** Granular promotion status */
+    promotionStatus?: string;
     /** Whether rollback was triggered */
     rollbackTriggered: boolean;
     /** Rollback version ID */
     rollbackVersionId?: string;
+    /** Whether rollback succeeded */
+    rollbackSucceeded?: boolean;
+    /** Post-rollback health status */
+    postRollbackHealthy?: boolean;
+    /** Failure phase */
+    failurePhase?: string;
     /** Release tag */
     releaseTag?: string;
     /** Git SHA */

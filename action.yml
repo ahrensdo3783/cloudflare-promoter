@@ -89,6 +89,10 @@ inputs:
     default: 'true'
 
   # ── General ──
+  auto-rollback:
+    description: 'If true (default), automatically rollback to the previous stable version on promotion failure. Set to false to disable automatic rollback.'
+    required: false
+    default: 'true'
   dry-run:
     description: 'If true, validate inputs and print the promotion plan without deploying.'
     required: false
@@ -125,15 +129,19 @@ outputs:
 
   # ── Promotion ──
   promotion-status:
-    description: 'Overall promotion status: "success", "staging-only", "rolled-back", "failed", or "dry-run".'
+    description: 'Granular promotion status: "success", "staging-only", "dry-run", "failed-no-rollback", "failed-rollback-succeeded", "failed-rollback-failed", or "failed-rollback-disabled".'
   promotion-result:
     description: 'Alias for promotion-status (backward compat).'
 
   # ── Rollback ──
   rollback-triggered:
-    description: 'Whether an automatic rollback was triggered (true/false).'
+    description: 'Whether an automatic rollback was attempted (true/false).'
   rollback-version-id:
     description: 'Version ID that was rolled back to, if rollback occurred.'
+  rollback-succeeded:
+    description: 'Whether the rollback succeeded (true/false). Empty if no rollback attempted.'
+  post-rollback-healthy:
+    description: 'Whether post-rollback health check passed (true/false). Empty if not checked.'
 
 runs:
   using: 'node20'
