@@ -15,6 +15,8 @@ For production-ready integration templates, use these workflow files directly:
 - `.github/workflows/integration-merge-promotion.yml` -- merge-group and main-branch promotion flow
 - `.github/workflows/integration-feature-matrix.yml` -- manual matrix coverage for strategy and release-note modes
 
+For out-of-the-box testing, this repository also includes a deployable Worker fixture at `.github/integration/worker`.
+
 ---
 
 ## Features

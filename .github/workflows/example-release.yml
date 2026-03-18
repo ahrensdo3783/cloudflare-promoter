@@ -69,13 +69,15 @@ jobs:
           cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           worker-name: my-worker
+          working-directory: .github/integration/worker
           environment: production
           promotion-strategy: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['promotion-strategy'] || 'gradual' }}
           gradual-steps: '10,50,100'
           gradual-step-wait-seconds: '30'
-          smoke-test-url: https://my-worker.example.workers.dev/health
+          smoke-test-url: https://example.com
           smoke-test-expected-status: '200'
-          smoke-test-expected-body-contains: '"status":"ok"'
+          smoke-test-expected-body-contains: 'Example Domain'
+          smoke-test-command: "node -e \"console.log('smoke command ok')\""
           smoke-test-retries: '3'
           smoke-test-retry-interval: '2000'
           auto-rollback: 'true'

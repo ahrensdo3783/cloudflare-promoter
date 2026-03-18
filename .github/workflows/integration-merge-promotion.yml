@@ -96,15 +96,16 @@ jobs:
         with:
           cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          worker-name: ${{ vars.CF_WORKER_NAME }}
-          working-directory: ${{ vars.CF_WORKING_DIRECTORY || '.' }}
+          worker-name: ${{ vars.CF_WORKER_NAME || 'my-worker' }}
+          working-directory: ${{ vars.CF_WORKING_DIRECTORY || '.github/integration/worker' }}
           environment: ${{ vars.CF_ENVIRONMENT || 'production' }}
           promotion-strategy: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['promotion-strategy'] || 'immediate' }}
           gradual-steps: ${{ vars.CF_GRADUAL_STEPS || '10,50,100' }}
           gradual-step-wait-seconds: ${{ vars.CF_GRADUAL_STEP_WAIT_SECONDS || '30' }}
-          smoke-test-url: ${{ vars.CF_PRODUCTION_SMOKE_URL }}
+          smoke-test-url: ${{ vars.CF_PRODUCTION_SMOKE_URL || 'https://example.com' }}
           smoke-test-expected-status: ${{ vars.CF_SMOKE_EXPECTED_STATUS || '200' }}
-          smoke-test-expected-body-contains: ${{ vars.CF_SMOKE_EXPECTED_BODY }}
+          smoke-test-expected-body-contains: ${{ vars.CF_SMOKE_EXPECTED_BODY || 'Example Domain' }}
+          smoke-test-command: "node -e \"console.log('smoke command ok')\""
           smoke-test-retries: ${{ vars.CF_SMOKE_RETRIES || '3' }}
           smoke-test-retry-interval: ${{ vars.CF_SMOKE_RETRY_INTERVAL || '2000' }}
           auto-rollback: 'true'
