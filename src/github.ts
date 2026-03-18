@@ -39,15 +39,26 @@ export function resolveReleaseContext(): ReleaseContext {
     };
   }
 
-  // Fallback for non-release events (workflow_dispatch, push, etc.)
-  if (eventName === 'workflow_dispatch' || eventName === 'push' || eventName === 'merge_group') {
+  // Fallback for non-release events (workflow_dispatch, push, PR, etc.)
+  if (
+    eventName === 'workflow_dispatch' ||
+    eventName === 'push' ||
+    eventName === 'merge_group' ||
+    eventName === 'pull_request' ||
+    eventName === 'pull_request_target'
+  ) {
+    const pseudoTag =
+      eventName === 'pull_request' || eventName === 'pull_request_target'
+        ? `pr-${(payload.pull_request?.number as number | undefined) || 'unknown'}`
+        : context.ref.replace('refs/tags/', '').replace('refs/heads/', '');
+
     core.warning(
       `Event "${eventName}" does not provide a release payload. ` +
         'Using ref/SHA as pseudo-release context.',
     );
     return {
       id: 0,
-      tagName: context.ref.replace('refs/tags/', '').replace('refs/heads/', ''),
+      tagName: pseudoTag,
       name: `Deployment from ${eventName}`,
       body: '',
       prerelease: false,
@@ -62,7 +73,7 @@ export function resolveReleaseContext(): ReleaseContext {
   throw new ActionError(
     ErrorCode.MISSING_RELEASE_CONTEXT,
     `Unsupported event type "${eventName}". ` +
-      'This action supports: release, workflow_dispatch, push, merge_group.',
+      'This action supports: release, workflow_dispatch, push, merge_group, pull_request, pull_request_target.',
   );
 }
 

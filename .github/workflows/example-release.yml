@@ -70,7 +70,7 @@ jobs:
           cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           worker-name: my-worker
           environment: production
-          promotion-strategy: ${{ github.event.inputs.promotion-strategy || 'gradual' }}
+          promotion-strategy: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['promotion-strategy'] || 'gradual' }}
           gradual-steps: '10,50,100'
           gradual-step-wait-seconds: '30'
           smoke-test-url: https://my-worker.example.workers.dev/health
@@ -79,7 +79,7 @@ jobs:
           smoke-test-retries: '3'
           smoke-test-retry-interval: '2000'
           auto-rollback: 'true'
-          dry-run: ${{ github.event.inputs.dry-run || 'false' }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['dry-run'] || 'false' }}
           release-note-mode: replace-section
           deployment-section-heading: Workers Production Promotion
 

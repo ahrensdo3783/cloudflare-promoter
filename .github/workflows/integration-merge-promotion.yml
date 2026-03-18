@@ -1,0 +1,125 @@
+# ──────────────────────────────────────────────────────────
+# Real Integration: Merge and Mainline Promotion
+# ──────────────────────────────────────────────────────────
+#
+# This workflow promotes the Worker for merge-group validation and
+# post-merge mainline deployments.
+
+name: Integration - Merge Promotion
+
+on:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Run in dry-run mode (validate only)'
+        required: false
+        default: 'false'
+        type: boolean
+      promotion-strategy:
+        description: 'Promotion strategy'
+        required: false
+        default: 'immediate'
+        type: choice
+        options:
+          - immediate
+          - gradual
+          - staging-only
+
+permissions:
+  contents: write
+  deployments: write
+
+jobs:
+  promote:
+    name: Promote Worker on Merge/Mainline
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate required secrets
+        id: preflight
+        shell: bash
+        run: |
+          ready=true
+
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::warning::Missing required secret: CLOUDFLARE_API_TOKEN"
+            ready=false
+          fi
+
+          if [ -z "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "::warning::Missing required secret: CLOUDFLARE_ACCOUNT_ID"
+            ready=false
+          fi
+
+          echo "ready=${ready}" >> "$GITHUB_OUTPUT"
+
+      - name: Mark skipped when required secrets are missing
+        if: steps.preflight.outputs.ready != 'true'
+        shell: bash
+        run: |
+          echo "## Merge integration run skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Required Cloudflare secrets are not configured." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout repository
+        if: steps.preflight.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: steps.preflight.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.preflight.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Promote Worker
+        if: steps.preflight.outputs.ready == 'true'
+        id: promote
+        uses: BotCoder254/cloudflare-promoter@v1
+        with:
+          cloudflare-api-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          cloudflare-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          worker-name: ${{ vars.CF_WORKER_NAME }}
+          working-directory: ${{ vars.CF_WORKING_DIRECTORY || '.' }}
+          environment: ${{ vars.CF_ENVIRONMENT || 'production' }}
+          promotion-strategy: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['promotion-strategy'] || 'immediate' }}
+          gradual-steps: ${{ vars.CF_GRADUAL_STEPS || '10,50,100' }}
+          gradual-step-wait-seconds: ${{ vars.CF_GRADUAL_STEP_WAIT_SECONDS || '30' }}
+          smoke-test-url: ${{ vars.CF_PRODUCTION_SMOKE_URL }}
+          smoke-test-expected-status: ${{ vars.CF_SMOKE_EXPECTED_STATUS || '200' }}
+          smoke-test-expected-body-contains: ${{ vars.CF_SMOKE_EXPECTED_BODY }}
+          smoke-test-retries: ${{ vars.CF_SMOKE_RETRIES || '3' }}
+          smoke-test-retry-interval: ${{ vars.CF_SMOKE_RETRY_INTERVAL || '2000' }}
+          auto-rollback: 'true'
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs['dry-run'] || 'false' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          release-note-mode: 'replace-section'
+          deployment-section-heading: ${{ vars.CF_DEPLOYMENT_SECTION_HEADING || 'Workers Production Promotion' }}
+
+      - name: Deployment summary
+        if: always() && steps.preflight.outputs.ready == 'true'
+        shell: bash
+        run: |
+          echo "## Merge/mainline promotion outputs" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Output | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ------ | ----- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Promotion status | ${{ steps.promote.outputs.promotion-status }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Worker name | ${{ steps.promote.outputs.worker-name }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Candidate version ID | ${{ steps.promote.outputs.candidate-version-id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deployment ID | ${{ steps.promote.outputs.deployment-id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Production URL | ${{ steps.promote.outputs.production-url }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Smoke test | ${{ steps.promote.outputs.smoke-test-status }} |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on unsuccessful promotion
+        if: steps.preflight.outputs.ready == 'true' && startsWith(steps.promote.outputs.promotion-status, 'failed')
+        run: |
+          echo "::error::Promotion failed with status: ${{ steps.promote.outputs.promotion-status }}"
+          exit 1

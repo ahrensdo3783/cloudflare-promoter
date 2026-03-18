@@ -6,11 +6,20 @@ A  GitHub Action that turns a **GitHub Release** into a controlled **Cloudflare 
 [![Node.js 20](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=fff)](#)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=fff)](#)
 
+## Integration Workflows
+
+For production-ready integration templates, use these workflow files directly:
+
+- `.github/workflows/integration-release-promotion.yml` -- release-published deployment and promotion flow
+- `.github/workflows/integration-pr-validation.yml` -- pull-request dry-run validation flow
+- `.github/workflows/integration-merge-promotion.yml` -- merge-group and main-branch promotion flow
+- `.github/workflows/integration-feature-matrix.yml` -- manual matrix coverage for strategy and release-note modes
+
 ---
 
 ## Features
 
-- **Release-driven deployment** -- triggers on `release.published` (supports `workflow_dispatch`, `push`, `merge_group`)
+- **Release-driven deployment** -- triggers on `release.published` (supports `workflow_dispatch`, `push`, `merge_group`, `pull_request`)
 - **Promotion strategies** -- three modes: `immediate`, `gradual`, and `staging-only`
 - **Gradual rollout** -- split traffic with configurable percentage steps (e.g., `10,50,100`)
 - **Two-phase smoke testing** -- candidate verification before promotion, post-promotion verification after
