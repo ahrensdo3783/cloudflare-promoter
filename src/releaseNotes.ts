@@ -19,9 +19,25 @@ export function buildReleaseNotesSection(
   for (const step of result.stepResults) {
     if (step.smokeTest) {
       smokeTestPassed = step.smokeTest.passed;
-      if (!smokeTestPassed) break; // One failure is enough
+      if (!smokeTestPassed) break;
     }
   }
+
+  // Also check candidate/post-promotion smoke results
+  if (smokeTestPassed === undefined && result.candidateSmokeResult) {
+    smokeTestPassed = result.candidateSmokeResult.passed;
+  }
+  if (smokeTestPassed !== false && result.postPromotionSmokeResult) {
+    smokeTestPassed = result.postPromotionSmokeResult.passed;
+  }
+
+  const promotionResult = result.state === 'complete'
+    ? 'success'
+    : result.state === 'staging-only'
+      ? 'staging-only'
+      : result.state === 'rolled-back'
+        ? 'rolled-back'
+        : 'failed';
 
   return {
     deploymentId: result.deploy?.deploymentId,
@@ -30,11 +46,8 @@ export function buildReleaseNotesSection(
     stagingUrl: result.deploy?.stagingUrl,
     productionUrl: result.deploy?.productionUrl,
     smokeTestPassed,
-    promotionResult: result.state === 'complete'
-      ? 'success'
-      : result.state === 'rolled-back'
-        ? 'rolled-back'
-        : 'failed',
+    promotionResult,
+    promotionStrategy: result.deploy ? (result.state === 'staging-only' ? 'staging-only' : undefined) : undefined,
     rollbackTriggered: result.state === 'rolled-back',
     rollbackVersionId: result.rollback?.rolledBackToVersionId,
     releaseTag: result.deploy?.releaseTag,
@@ -42,7 +55,7 @@ export function buildReleaseNotesSection(
     sourceTrigger: result.deploy?.sourceTrigger,
     timestamp: result.completedAt || timestamp(),
     environment,
-    rolloutSteps: rolloutSteps ? rolloutSteps.map((s) => `${s}%`).join(' → ') : undefined,
+    rolloutSteps: rolloutSteps ? rolloutSteps.map((s) => `${s}%`).join(' -> ') : undefined,
     previousStableVersionId: result.previousStableVersionId,
   };
 }
@@ -54,27 +67,24 @@ export function buildJobSummary(
   result: PromotionResult,
   environment: string,
   tagName?: string,
+  strategy?: string,
 ): string {
   const lines: string[] = [];
 
   // Header
-  lines.push('# 🚀 Workers Release Promoter');
+  lines.push('# Workers Release Promoter');
   lines.push('');
 
-  // Status badge
-  const statusEmoji =
-    result.state === 'complete'
-      ? '✅'
-      : result.state === 'rolled-back'
-        ? '⚠️'
-        : '❌';
+  // Status
   const statusText =
     result.state === 'complete'
       ? 'Deployment Successful'
-      : result.state === 'rolled-back'
-        ? 'Rolled Back'
-        : 'Deployment Failed';
-  lines.push(`## ${statusEmoji} ${statusText}`);
+      : result.state === 'staging-only'
+        ? 'Staging-Only Complete'
+        : result.state === 'rolled-back'
+          ? 'Rolled Back'
+          : 'Deployment Failed';
+  lines.push(`## ${statusText}`);
   lines.push('');
 
   // Summary table
@@ -84,6 +94,9 @@ export function buildJobSummary(
     lines.push(`| **Release** | \`${tagName}\` |`);
   }
   lines.push(`| **Environment** | \`${environment}\` |`);
+  if (strategy) {
+    lines.push(`| **Strategy** | \`${strategy}\` |`);
+  }
   lines.push(`| **Status** | ${statusText} |`);
 
   if (result.deploy?.versionId) {
@@ -117,38 +130,62 @@ export function buildJobSummary(
 
   // Rollout steps
   if (result.stepResults.length > 0) {
-    lines.push('### 📊 Rollout Steps');
+    lines.push('### Rollout Steps');
     lines.push('');
     lines.push('| Step | Percentage | Status | Smoke Test |');
     lines.push('| ---- | ---------- | ------ | ---------- |');
     result.stepResults.forEach((step, i) => {
-      const stepStatus = step.success ? '✅ OK' : '❌ Failed';
-      let smokeCol = '—';
+      const stepStatus = step.success ? 'OK' : 'Failed';
+      let smokeCol = '--';
       if (step.smokeTest) {
         smokeCol = step.smokeTest.passed
-          ? `✅ ${step.smokeTest.latencyMs}ms`
-          : `❌ ${step.smokeTest.error || 'Failed'}`;
+          ? `Passed (${step.smokeTest.durationMs}ms)`
+          : `Failed: ${step.smokeTest.failureReason || 'Unknown'}`;
       }
       lines.push(`| ${i + 1} | ${step.percentage}% | ${stepStatus} | ${smokeCol} |`);
     });
     lines.push('');
   }
 
+  // Candidate verification
+  if (result.candidateSmokeResult) {
+    lines.push('### Candidate Verification');
+    lines.push('');
+    lines.push(`Status: **${result.candidateSmokeResult.status}** (${result.candidateSmokeResult.durationMs}ms)`);
+    if (result.candidateSmokeResult.checks.length > 0) {
+      lines.push('');
+      lines.push('| Check | Status | Latency | Details |');
+      lines.push('| ----- | ------ | ------- | ------- |');
+      for (const check of result.candidateSmokeResult.checks) {
+        lines.push(`| ${check.name} | ${check.passed ? 'Passed' : 'Failed'} | ${check.latencyMs}ms | ${check.error || `Status ${check.statusCode}`} |`);
+      }
+    }
+    lines.push('');
+  }
+
+  // Post-promotion verification
+  if (result.postPromotionSmokeResult) {
+    lines.push('### Post-Promotion Verification');
+    lines.push('');
+    lines.push(`Status: **${result.postPromotionSmokeResult.status}** (${result.postPromotionSmokeResult.durationMs}ms)`);
+    lines.push('');
+  }
+
   // Rollback info
   if (result.rollback) {
-    lines.push('### ⏪ Rollback');
+    lines.push('### Rollback');
     lines.push('');
     lines.push(
       result.rollback.success
-        ? `✅ Successfully rolled back to version \`${result.rollback.rolledBackToVersionId}\``
-        : `❌ Rollback failed: ${result.rollback.message}`,
+        ? `Rolled back to version \`${result.rollback.rolledBackToVersionId}\``
+        : `Rollback failed: ${result.rollback.message}`,
     );
     lines.push('');
   }
 
   // Error
   if (result.error) {
-    lines.push('### ❌ Error');
+    lines.push('### Error');
     lines.push('');
     lines.push(`\`\`\`\n${result.error}\n\`\`\``);
     lines.push('');
@@ -156,7 +193,7 @@ export function buildJobSummary(
 
   // Lifecycle history
   if (result.lifecycle && result.lifecycle.history.length > 0) {
-    lines.push('### 📋 Deployment Lifecycle');
+    lines.push('### Deployment Lifecycle');
     lines.push('');
     lines.push('| State | Timestamp |');
     lines.push('| ----- | --------- |');

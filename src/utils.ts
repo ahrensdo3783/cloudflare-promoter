@@ -13,11 +13,6 @@ export function sleep(ms: number): Promise<void> {
 
 /**
  * Retry an async function with exponential backoff.
- *
- * @param fn        The async function to retry
- * @param retries   Maximum number of retry attempts
- * @param delayMs   Initial delay between retries (doubles each attempt)
- * @param label     Label for logging
  */
 export async function retry<T>(
   fn: () => Promise<T>,
@@ -34,7 +29,7 @@ export async function retry<T>(
       lastError = err;
       if (attempt <= retries) {
         const wait = delayMs * Math.pow(2, attempt - 1);
-        core.warning(`${label} failed (attempt ${attempt}/${retries + 1}), retrying in ${wait}ms…`);
+        core.warning(`${label} failed (attempt ${attempt}/${retries + 1}), retrying in ${wait}ms`);
         await sleep(wait);
       }
     }
@@ -52,7 +47,6 @@ export function timestamp(): string {
 
 /**
  * Mask a secret value in GitHub Actions logs.
- * Wraps @actions/core.setSecret for convenience.
  */
 export function maskSecret(value: string): void {
   if (value && value.length > 0) {
@@ -62,9 +56,7 @@ export function maskSecret(value: string): void {
 
 /**
  * Parse a comma-separated string of integers into a number array.
- * E.g., "10,50,100" → [10, 50, 100]
- *
- * @throws Error if any value is not a valid positive integer ≤ 100
+ * E.g., "10,50,100" -> [10, 50, 100]
  */
 export function parsePercentages(input: string): number[] {
   const raw = input
@@ -104,7 +96,6 @@ export function parsePercentages(input: string): number[] {
 
 /**
  * Format a duration in milliseconds to a human-readable string.
- * E.g., 12345 → "12.3s", 1234 → "1.2s", 500 → "500ms"
  */
 export function formatDuration(ms: number): string {
   if (ms < 1000) {
@@ -114,16 +105,15 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * Safely truncate a string to a maximum length, appending "…" if truncated.
+ * Safely truncate a string to a maximum length, appending "..." if truncated.
  */
 export function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str;
-  return str.slice(0, maxLength - 1) + '…';
+  return str.slice(0, maxLength - 1) + '...';
 }
 
 /**
  * Redact a sensitive value for log display.
- * Shows first 4 chars + "****" for strings longer than 8 chars.
  */
 export function redact(value: string): string {
   if (value.length <= 8) return '****';

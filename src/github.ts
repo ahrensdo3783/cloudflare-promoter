@@ -15,7 +15,7 @@ export function resolveReleaseContext(): ReleaseContext {
   const { context } = github;
   const { eventName, payload } = context;
 
-  core.info(`📋 Resolving release context from event: ${eventName}`);
+  core.info(`[github] Resolving release context from event: ${eventName}`);
 
   if (eventName === 'release' && payload.release) {
     const release = payload.release;
@@ -70,12 +70,12 @@ export async function updateReleaseBody(
   githubToken: string,
 ): Promise<void> {
   if (!githubToken) {
-    core.warning('No GitHub token provided — skipping release notes update.');
+    core.warning('No GitHub token provided -- skipping release notes update.');
     return;
   }
 
   if (releaseContext.id === 0) {
-    core.info('ℹ️  Skipping release notes update (no GitHub Release associated).');
+    core.info('[github] Skipping release notes update (no GitHub Release associated)');
     return;
   }
 
@@ -109,7 +109,7 @@ export async function updateReleaseBody(
       body: updatedBody,
     });
 
-    core.info('✅ Release notes updated with deployment information');
+    core.info('[github] Release notes updated with deployment information');
   } catch (err) {
     core.warning(
       `Failed to update release notes: ${err instanceof Error ? err.message : String(err)}`,
@@ -128,7 +128,7 @@ export async function createDeploymentStatus(
   githubToken: string,
 ): Promise<void> {
   if (!githubToken) {
-    core.warning('No GitHub token provided — skipping deployment status.');
+    core.warning('No GitHub token provided -- skipping deployment status.');
     return;
   }
 
@@ -157,7 +157,7 @@ export async function createDeploymentStatus(
         description: `Cloudflare Workers ${state}`,
       });
 
-      core.info(`✅ GitHub deployment status created: ${state}`);
+      core.info(`[github] Deployment status created: ${state}`);
     }
   } catch (err) {
     core.warning(
@@ -170,31 +170,56 @@ export async function createDeploymentStatus(
 
 function buildDeploymentMarkdown(section: ReleaseNotesSection): string {
   const lines: string[] = [];
-  lines.push('### 🚀 Cloudflare Workers Deployment');
+  lines.push('### Cloudflare Workers Deployment');
   lines.push('');
   lines.push(`| Field | Value |`);
   lines.push(`| ----- | ----- |`);
   lines.push(`| **Environment** | \`${section.environment}\` |`);
-  lines.push(
-    `| **Result** | ${section.promotionResult === 'success' ? '✅ Success' : section.promotionResult === 'rolled-back' ? '⚠️ Rolled back' : '❌ Failed'} |`,
-  );
 
+  const resultLabel =
+    section.promotionResult === 'success'
+      ? 'Success'
+      : section.promotionResult === 'staging-only'
+        ? 'Staging-Only'
+        : section.promotionResult === 'rolled-back'
+          ? 'Rolled Back'
+          : 'Failed';
+  lines.push(`| **Result** | ${resultLabel} |`);
+
+  if (section.promotionStrategy) {
+    lines.push(`| **Strategy** | \`${section.promotionStrategy}\` |`);
+  }
+  if (section.releaseTag) {
+    lines.push(`| **Release** | \`${section.releaseTag}\` |`);
+  }
   if (section.deploymentId) {
     lines.push(`| **Deployment ID** | \`${section.deploymentId}\` |`);
   }
   if (section.versionId) {
     lines.push(`| **Version ID** | \`${section.versionId}\` |`);
   }
-  if (section.url) {
+  if (section.stagingUrl) {
+    lines.push(`| **Staging URL** | ${section.stagingUrl} |`);
+  }
+  if (section.productionUrl) {
+    lines.push(`| **Production URL** | ${section.productionUrl} |`);
+  } else if (section.url) {
     lines.push(`| **URL** | ${section.url} |`);
   }
+  if (section.gitSha) {
+    lines.push(`| **Git SHA** | \`${section.gitSha.substring(0, 12)}\` |`);
+  }
   if (section.smokeTestPassed !== undefined) {
-    lines.push(
-      `| **Smoke Test** | ${section.smokeTestPassed ? '✅ Passed' : '❌ Failed'} |`,
-    );
+    lines.push(`| **Smoke Test** | ${section.smokeTestPassed ? 'Passed' : 'Failed'} |`);
   }
   if (section.rollbackTriggered) {
-    lines.push(`| **Rollback** | ⚠️ Triggered |`);
+    lines.push(`| **Rollback** | Triggered |`);
+    if (section.rollbackVersionId) {
+      lines.push(`| **Rollback Version** | \`${section.rollbackVersionId}\` |`);
+    }
+  }
+  if (section.previousStableVersionId) {
+    lines.push(`| **Previous Stable** | \`${section.previousStableVersionId}\` |`);
   }
   if (section.rolloutSteps) {
     lines.push(`| **Rollout** | ${section.rolloutSteps} |`);

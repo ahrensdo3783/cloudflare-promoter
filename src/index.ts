@@ -17,8 +17,8 @@ import { ActionError } from './types';
  *  1. Parse + validate inputs
  *  2. Resolve release context from GitHub event
  *  3. Validate Cloudflare/Wrangler environment
- *  4. If dry-run → validate & print plan, exit
- *  5. Execute promotion flow (deploy → smoke → promote → rollback if needed)
+ *  4. If dry-run -> validate & print plan, exit
+ *  5. Execute promotion flow (deploy -> smoke -> promote -> rollback if needed)
  *  6. Annotate release page with deployment info
  *  7. Set outputs & write job summary
  */
@@ -28,18 +28,18 @@ async function run(): Promise<void> {
   try {
     // ── 1. Parse Inputs ──
     core.info('');
-    core.info('╔═══════════════════════════════════════════╗');
-    core.info('║   Workers Release Promoter v1.0.0        ║');
-    core.info('╚═══════════════════════════════════════════╝');
+    core.info('='.repeat(50));
+    core.info('  Workers Release Promoter v1.0.0');
+    core.info('='.repeat(50));
     core.info('');
 
     const inputs = getInputs();
 
     // ── 2. Resolve Release Context ──
     const releaseContext = resolveReleaseContext();
-    core.info(`📦 Release: ${releaseContext.tagName} — ${releaseContext.name}`);
+    core.info(`[release] Tag: ${releaseContext.tagName} -- ${releaseContext.name}`);
     if (releaseContext.prerelease) {
-      core.info('⚠️  This is a pre-release.');
+      core.notice('This is a pre-release.');
     }
 
     // ── 3. Validate Wrangler ──
@@ -48,21 +48,24 @@ async function run(): Promise<void> {
     // ── 4. Dry Run ──
     if (inputs.dryRun) {
       core.info('');
-      core.info('═══════════════════════════════════════════');
-      core.info('  DRY RUN — Validation Only');
-      core.info('═══════════════════════════════════════════');
+      core.info('='.repeat(50));
+      core.info('  DRY RUN -- Validation Only');
+      core.info('='.repeat(50));
       core.info('');
 
       const plan = buildPromotionPlan(inputs);
-      core.info('✅ Inputs validated successfully');
-      core.info(`✅ Release context resolved: ${releaseContext.tagName}`);
-      core.info(`✅ Wrangler is available`);
-      core.info(`✅ Worker: ${inputs.workerName || '(from config)'}`);
-      core.info(`✅ Environment: ${inputs.environment}`);
-      core.info(`✅ Rollout plan: ${plan.steps.join('% → ')}%`);
-      core.info(`✅ Smoke tests: ${plan.smokeTestEnabled ? 'enabled' : 'disabled'}`);
+      core.info('[ok] Inputs validated successfully');
+      core.info(`[ok] Release context resolved: ${releaseContext.tagName}`);
+      core.info('[ok] Wrangler is available');
+      core.info(`[ok] Worker: ${inputs.workerName || '(from config)'}`);
+      core.info(`[ok] Environment: ${inputs.environment}`);
+      core.info(`[ok] Strategy: ${inputs.promotionStrategy}`);
+      if (plan.steps.length > 0) {
+        core.info(`[ok] Rollout plan: ${plan.steps.map(s => `${s.percent}%`).join(' -> ')}`);
+      }
+      core.info(`[ok] Smoke tests: ${plan.smokeTestEnabled ? 'enabled' : 'disabled'}`);
       core.info('');
-      core.info('🔍 Dry run complete — no deployments were made.');
+      core.notice('Dry run complete -- no deployments were made');
 
       // Set outputs for dry run
       core.setOutput('release-tag', releaseContext.tagName);
@@ -93,8 +96,11 @@ async function run(): Promise<void> {
     // ── 6. Execute Promotion ──
     const plan = buildPromotionPlan(inputs);
     core.info('');
-    core.info(`📋 Promotion plan: ${plan.steps.join('% → ')}%`);
-    core.info(`   Smoke tests: ${plan.smokeTestEnabled ? '✅ enabled' : '⏭️  disabled'}`);
+    core.info(`[plan] Strategy: ${plan.strategy}`);
+    if (plan.steps.length > 0) {
+      core.info(`[plan] Steps: ${plan.steps.map(s => `${s.percent}%`).join(' -> ')}`);
+    }
+    core.info(`[plan] Smoke tests: ${plan.smokeTestEnabled ? 'enabled' : 'disabled'}`);
     core.info('');
 
     const result = await executePromotion(inputs, plan, releaseContext);
@@ -120,15 +126,27 @@ async function run(): Promise<void> {
     // Promotion status
     const promotionStatus = result.state === 'complete'
       ? 'success'
-      : result.state === 'rolled-back'
-        ? 'rolled-back'
-        : 'failed';
+      : result.state === 'staging-only'
+        ? 'staging-only'
+        : result.state === 'rolled-back'
+          ? 'rolled-back'
+          : 'failed';
     core.setOutput('promotion-result', promotionStatus);
     core.setOutput('promotion-status', promotionStatus);
 
-    // Determine smoke test output
+    // Smoke test status
     let smokeTestPassed = '';
     let smokeTestStatus = 'skipped';
+
+    if (result.candidateSmokeResult) {
+      smokeTestPassed = String(result.candidateSmokeResult.passed);
+      smokeTestStatus = result.candidateSmokeResult.passed ? 'passed' : 'failed';
+    }
+    if (result.postPromotionSmokeResult) {
+      smokeTestPassed = String(result.postPromotionSmokeResult.passed);
+      smokeTestStatus = result.postPromotionSmokeResult.passed ? 'passed' : 'failed';
+    }
+    // Also check step-level smoke results
     for (const step of result.stepResults) {
       if (step.smokeTest) {
         smokeTestPassed = String(step.smokeTest.passed);
@@ -148,7 +166,10 @@ async function run(): Promise<void> {
     await updateReleaseBody(releaseContext, notesSection, inputs.githubToken);
 
     // ── 9. Update GitHub Deployment Status ──
-    const deployState = result.state === 'complete' ? 'success' : 'failure';
+    const deployState =
+      result.state === 'complete' || result.state === 'staging-only'
+        ? 'success'
+        : 'failure';
     await createDeploymentStatus(
       releaseContext,
       deployState,
@@ -158,24 +179,32 @@ async function run(): Promise<void> {
     );
 
     // ── 10. Write Job Summary ──
-    const summary = buildJobSummary(result, inputs.environment, releaseContext.tagName);
+    const summary = buildJobSummary(
+      result,
+      inputs.environment,
+      releaseContext.tagName,
+      inputs.promotionStrategy,
+    );
     await core.summary.addRaw(summary).write();
 
     // ── 11. Final Status ──
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     core.info('');
-    core.info('═══════════════════════════════════════════');
+    core.info('='.repeat(50));
 
     if (result.state === 'complete') {
-      core.info(`  ✅ Promotion complete in ${elapsed}s`);
-      core.info('═══════════════════════════════════════════');
+      core.info(`  [success] Promotion complete in ${elapsed}s`);
+      core.info('='.repeat(50));
+    } else if (result.state === 'staging-only') {
+      core.info(`  [staging-only] Candidate deployed and verified in ${elapsed}s`);
+      core.info('='.repeat(50));
     } else if (result.state === 'rolled-back') {
-      core.info(`  ⚠️  Promotion rolled back after ${elapsed}s`);
-      core.info('═══════════════════════════════════════════');
+      core.info(`  [rolled-back] Promotion rolled back after ${elapsed}s`);
+      core.info('='.repeat(50));
       core.setFailed(`Deployment rolled back: ${result.error || 'Unknown error'}`);
     } else {
-      core.info(`  ❌ Promotion failed after ${elapsed}s`);
-      core.info('═══════════════════════════════════════════');
+      core.info(`  [failed] Promotion failed after ${elapsed}s`);
+      core.info('='.repeat(50));
       core.setFailed(`Deployment failed: ${result.error || 'Unknown error'}`);
     }
   } catch (err) {
@@ -189,7 +218,7 @@ async function run(): Promise<void> {
       core.setFailed(err instanceof Error ? err.message : String(err));
     }
 
-    core.info(`⏱️  Failed after ${elapsed}s`);
+    core.info(`[timing] Failed after ${elapsed}s`);
   }
 }
 

@@ -7,12 +7,15 @@ branding:
   color: 'orange'
 
 inputs:
+  # ── Cloudflare Auth ──
   cloudflare-api-token:
     description: 'Cloudflare API token with Workers deployment permissions. Can also be set via CLOUDFLARE_API_TOKEN env var.'
     required: false
   cloudflare-account-id:
     description: 'Cloudflare account ID. Can also be set via CLOUDFLARE_ACCOUNT_ID env var.'
     required: false
+
+  # ── Worker Configuration ──
   worker-name:
     description: 'Name of the Cloudflare Worker to deploy. If omitted, resolved from wrangler config in working directory.'
     required: false
@@ -24,8 +27,35 @@ inputs:
     description: 'Wrangler environment to deploy to (e.g., "production", "staging").'
     required: false
     default: 'production'
+
+  # ── Promotion Strategy ──
+  promotion-strategy:
+    description: 'Promotion strategy: "immediate" (deploy and promote to 100%), "gradual" (incremental rollout), or "staging-only" (deploy and verify without promoting to production).'
+    required: false
+    default: 'immediate'
+  gradual-steps:
+    description: 'Comma-separated rollout percentages for gradual deployment (e.g., "10,50,100"). Only used when promotion-strategy is "gradual".'
+    required: false
+    default: '10,50,100'
+  gradual-step-wait-seconds:
+    description: 'Seconds to wait between gradual rollout steps before verification.'
+    required: false
+    default: '5'
+  post-step-smoke-tests:
+    description: 'Whether to run smoke tests after each gradual step (true/false).'
+    required: false
+    default: 'true'
+  rollout-percentage:
+    description: 'Deprecated alias for gradual-steps. Comma-separated rollout percentages. Use "100" for immediate full rollout.'
+    required: false
+    default: '100'
+
+  # ── Smoke Testing ──
   smoke-test-url:
     description: 'URL to hit for post-deploy smoke test. If omitted, smoke testing is skipped.'
+    required: false
+  smoke-test-paths:
+    description: 'Comma-separated additional paths to check relative to smoke-test-url (e.g., "/health,/api/status").'
     required: false
   smoke-test-expected-status:
     description: 'Expected HTTP status code from smoke test URL.'
@@ -39,13 +69,26 @@ inputs:
     required: false
     default: '10000'
   smoke-test-retries:
-    description: 'Number of retry attempts for smoke tests before failing.'
+    description: 'Number of retry attempts for each smoke check before failing.'
     required: false
     default: '3'
-  rollout-percentage:
-    description: 'Comma-separated rollout percentages for gradual deployment (e.g., "10,50,100"). Use "100" for immediate full rollout.'
+  smoke-test-retry-interval:
+    description: 'Interval in milliseconds between smoke test retry attempts.'
     required: false
-    default: '100'
+    default: '2000'
+  smoke-test-deadline:
+    description: 'Total deadline in milliseconds for all smoke tests to complete.'
+    required: false
+    default: '120000'
+  smoke-test-command:
+    description: 'Custom shell command to run as an additional smoke test. Runs after fetch-based checks.'
+    required: false
+  smoke-test-required:
+    description: 'If false, smoke test failures produce warnings but do not block promotion.'
+    required: false
+    default: 'true'
+
+  # ── General ──
   dry-run:
     description: 'If true, validate inputs and print the promotion plan without deploying.'
     required: false
@@ -56,13 +99,13 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
-  # ── Release context ──
+  # ── Release Context ──
   release-tag:
     description: 'Git tag of the release that triggered this deployment.'
   release-id:
     description: 'GitHub Release ID.'
 
-  # ── Deployment metadata ──
+  # ── Deployment Metadata ──
   deployment-id:
     description: 'Cloudflare deployment ID of the promoted version.'
   worker-version-id:
@@ -74,7 +117,7 @@ outputs:
   deployment-url:
     description: 'Best available URL of the deployed Worker.'
 
-  # ── Smoke test ──
+  # ── Smoke Test ──
   smoke-test-status:
     description: 'Smoke test outcome: "passed", "failed", or "skipped".'
   smoke-test-passed:
@@ -82,9 +125,9 @@ outputs:
 
   # ── Promotion ──
   promotion-status:
-    description: 'Overall promotion status: "success", "rolled-back", "failed", or "dry-run".'
+    description: 'Overall promotion status: "success", "staging-only", "rolled-back", "failed", or "dry-run".'
   promotion-result:
-    description: 'Alias for promotion-status (backward compat): "success", "rolled-back", or "failed".'
+    description: 'Alias for promotion-status (backward compat).'
 
   # ── Rollback ──
   rollback-triggered:

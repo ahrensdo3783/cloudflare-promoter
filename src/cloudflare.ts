@@ -39,7 +39,7 @@ async function execWrangler(
   const safeArgs = args.map((a) =>
     a.includes(inputs.auth.apiToken) ? '***' : a,
   );
-  core.info(`🔧 Running: wrangler ${safeArgs.join(' ')}`);
+  core.info(`[wrangler] Running: wrangler ${safeArgs.join(' ')}`);
 
   try {
     const result = await execa('npx', ['wrangler', ...args], {
@@ -50,9 +50,9 @@ async function execWrangler(
     });
 
     if (result.exitCode !== 0) {
-      core.warning(`Wrangler exited with code ${result.exitCode}`);
-      core.debug(`stdout: ${result.stdout}`);
-      core.debug(`stderr: ${result.stderr}`);
+      core.warning(`[wrangler] Exited with code ${result.exitCode}`);
+      core.debug(`[wrangler] stdout: ${result.stdout}`);
+      core.debug(`[wrangler] stderr: ${result.stderr}`);
     }
 
     return result;
@@ -69,13 +69,13 @@ async function execWrangler(
  * Ensure Wrangler is available in the path.
  */
 export async function ensureWrangler(inputs: ActionInputs): Promise<void> {
-  core.info('🔍 Checking Wrangler availability…');
+  core.info('[wrangler] Checking Wrangler availability');
   try {
     const result = await execWrangler(['--version'], inputs);
     if (result.exitCode !== 0) {
       throw new Error(result.stderr || 'Unknown error');
     }
-    core.info(`✅ Wrangler found: ${result.stdout.trim()}`);
+    core.info(`[wrangler] Found: ${result.stdout.trim()}`);
   } catch (err) {
     if (err instanceof ActionError) throw err;
     throw new ActionError(
@@ -97,7 +97,7 @@ export async function deployCandidate(
   inputs: ActionInputs,
   releaseContext?: ReleaseContext,
 ): Promise<DeployResult> {
-  core.info('🚀 Deploying candidate Worker version…');
+  core.info('[deploy] Deploying candidate Worker version');
 
   const args = ['deploy'];
 
@@ -153,7 +153,7 @@ export async function deployCandidate(
  * Returns the version ID for subsequent gradual promotion.
  */
 export async function uploadVersion(inputs: ActionInputs): Promise<string> {
-  core.info('📤 Uploading new Worker version (without deploying)…');
+  core.info('[deploy] Uploading new Worker version (without deploying)');
 
   const args = ['versions', 'upload'];
 
@@ -182,7 +182,7 @@ export async function uploadVersion(inputs: ActionInputs): Promise<string> {
     );
   }
 
-  core.info(`✅ Version uploaded: ${versionMatch[1]}`);
+  core.info(`[deploy] Version uploaded: ${versionMatch[1]}`);
   return versionMatch[1];
 }
 
@@ -193,7 +193,7 @@ export async function uploadVersion(inputs: ActionInputs): Promise<string> {
 export async function lookupCurrentStableVersion(
   inputs: ActionInputs,
 ): Promise<string | undefined> {
-  core.info('🔍 Looking up current stable Worker version…');
+  core.info('[deploy] Looking up current stable Worker version');
 
   const args = ['versions', 'list'];
 
@@ -204,7 +204,7 @@ export async function lookupCurrentStableVersion(
   const result = await execWrangler(args, inputs);
 
   if (result.exitCode !== 0) {
-    core.warning('Could not look up current stable version — proceeding without rollback target.');
+    core.warning('[deploy] Could not look up current stable version -- proceeding without rollback target');
     return undefined;
   }
 
@@ -214,11 +214,11 @@ export async function lookupCurrentStableVersion(
   );
 
   if (versionMatch?.[1]) {
-    core.info(`✅ Current stable version: ${versionMatch[1]}`);
+    core.info(`[deploy] Current stable version: ${versionMatch[1]}`);
     return versionMatch[1];
   }
 
-  core.info('ℹ️  No existing stable version found (first deployment?).');
+  core.info('[deploy] No existing stable version found (first deployment?)');
   return undefined;
 }
 
@@ -232,10 +232,10 @@ export async function promoteVersion(
   inputs: ActionInputs,
   previousVersionId?: string,
 ): Promise<PromotionStepResult> {
-  core.info(`📈 Promoting version ${versionId} to ${percentage}% traffic…`);
+  core.info(`[promote] Promoting version ${versionId} to ${percentage}% traffic`);
 
   if (percentage === 100) {
-    // Full promotion — use wrangler versions deploy with 100%
+    // Full promotion -- use wrangler versions deploy with 100%
     const args = [
       'versions',
       'deploy',
@@ -260,10 +260,10 @@ export async function promoteVersion(
     };
   }
 
-  // Gradual promotion — split traffic between old and new
+  // Gradual promotion -- split traffic between old and new
   if (!previousVersionId) {
     core.warning(
-      'No previous version for gradual split — promoting new version directly.',
+      '[promote] No previous version for gradual split -- promoting new version directly',
     );
     const args = [
       'versions',
@@ -318,7 +318,7 @@ export async function rollbackToVersion(
   versionId: string,
   inputs: ActionInputs,
 ): Promise<RollbackResult> {
-  core.info(`⏪ Rolling back to version ${versionId}…`);
+  core.info(`[rollback] Rolling back to version ${versionId}`);
 
   const args = ['versions', 'deploy', `${versionId}@100%`, '--yes'];
 
@@ -329,7 +329,7 @@ export async function rollbackToVersion(
   const result = await execWrangler(args, inputs);
 
   if (result.exitCode === 0) {
-    core.info(`✅ Successfully rolled back to version ${versionId}`);
+    core.info(`[rollback] Successfully rolled back to version ${versionId}`);
     return {
       success: true,
       rolledBackToVersionId: versionId,
@@ -339,7 +339,7 @@ export async function rollbackToVersion(
     };
   }
 
-  core.error(`❌ Rollback failed: ${result.stderr || result.stdout}`);
+  core.error(`[rollback] Rollback failed: ${result.stderr || result.stdout}`);
   return {
     success: false,
     rolledBackToVersionId: versionId,

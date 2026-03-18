@@ -1,48 +1,143 @@
 // ─────────────────────────────────────────────────────────
-// src/smoke.ts — Fetch-based smoke test engine
+// src/smoke.ts — Fetch-based smoke test engine + custom command
 // ─────────────────────────────────────────────────────────
 
 import * as core from '@actions/core';
-import { type SmokeTestConfig, type SmokeTestResult, ActionError, ErrorCode } from './types';
-import { retry, formatDuration, truncate } from './utils';
+import {
+  type SmokeTestConfig,
+  type SmokeTestResult,
+  type SmokeCheckResult,
+  type SmokeCheckDefinition,
+  ActionError,
+  ErrorCode,
+} from './types';
+import { retry, formatDuration, truncate, timestamp } from './utils';
 
 /**
- * Run a smoke test against the deployed Worker.
+ * Run the full smoke test suite against the deployed Worker.
  *
- * Uses Node 20 native fetch (no extra HTTP dependencies).
- * Supports: expected status, body-contains check, timeout, retries with backoff.
+ * Supports:
+ *  - Multiple endpoint checks via native fetch (Node 20)
+ *  - Custom command execution
+ *  - Configurable retries, timeouts, and total deadline
+ *  - Two-phase verification (candidate vs post-promotion)
  */
-export async function runSmokeTest(config: SmokeTestConfig): Promise<SmokeTestResult> {
-  core.info(`🧪 Running smoke test: ${config.url}`);
-  core.info(
-    `   Expected status: ${config.expectedStatus}, ` +
-      `timeout: ${formatDuration(config.timeoutMs)}, ` +
-      `retries: ${config.retries}`,
-  );
+export async function runSmokeTest(
+  config: SmokeTestConfig,
+  phase: 'candidate' | 'post-promotion' = 'candidate',
+): Promise<SmokeTestResult> {
+  const startTime = Date.now();
+  const startedAt = timestamp();
+  const checkResults: SmokeCheckResult[] = [];
+  let rawCommandOutput: string | undefined;
+  let overallPassed = true;
+  let failureReason: string | undefined;
 
-  if (config.expectedBodyContains) {
-    core.info(`   Expected body contains: "${truncate(config.expectedBodyContains, 80)}"`);
+  core.info(`[smoke-test] Starting ${phase} verification (${config.checks.length} check(s))`);
+
+  // Set a total deadline
+  const deadline = startTime + config.deadlineMs;
+
+  try {
+    // Run fetch-based checks
+    for (const check of config.checks) {
+      if (Date.now() >= deadline) {
+        failureReason = `Total smoke test deadline exceeded (${formatDuration(config.deadlineMs)})`;
+        overallPassed = false;
+        break;
+      }
+
+      const result = await runSingleCheck(check, config.retries, config.retryIntervalMs, deadline);
+      checkResults.push(result);
+
+      if (!result.passed) {
+        overallPassed = false;
+        failureReason = `Check "${result.name}" failed: ${result.error || 'unknown error'}`;
+        if (config.required) break; // Stop on first required failure
+      }
+    }
+
+    // Run custom command if provided
+    if (config.customCommand && overallPassed && Date.now() < deadline) {
+      core.info(`[smoke-test] Running custom command: ${config.customCommand}`);
+      const cmdResult = await runCustomCommand(config.customCommand);
+      rawCommandOutput = cmdResult.output;
+
+      if (!cmdResult.success) {
+        overallPassed = false;
+        failureReason = `Custom smoke command failed: ${cmdResult.error}`;
+      } else {
+        core.info('[smoke-test] Custom command passed');
+      }
+    }
+  } catch (err) {
+    overallPassed = false;
+    failureReason = err instanceof Error ? err.message : String(err);
+  }
+
+  const finishedAt = timestamp();
+  const durationMs = Date.now() - startTime;
+
+  const status = overallPassed ? 'passed' : 'failed';
+  core.info(`[smoke-test] ${phase} verification ${status} (${formatDuration(durationMs)})`);
+
+  if (!overallPassed && failureReason) {
+    core.error(`[smoke-test] Failure: ${failureReason}`);
+  }
+
+  return {
+    status,
+    passed: overallPassed,
+    checks: checkResults,
+    rawCommandOutput,
+    startedAt,
+    finishedAt,
+    durationMs,
+    failureReason,
+    phase,
+  };
+}
+
+/**
+ * Execute a single smoke check with retries.
+ */
+async function runSingleCheck(
+  check: SmokeCheckDefinition,
+  retries: number,
+  retryIntervalMs: number,
+  deadline: number,
+): Promise<SmokeCheckResult> {
+  core.info(`[smoke-test] Check "${check.name}": ${check.method} ${check.url}`);
+  core.info(`[smoke-test]   Expected: status=${check.expectedStatus}, timeout=${formatDuration(check.timeoutMs)}`);
+
+  if (check.expectedBodyIncludes) {
+    core.info(`[smoke-test]   Expected body contains: "${truncate(check.expectedBodyIncludes, 80)}"`);
   }
 
   let totalAttempts = 0;
 
   try {
     const result = await retry(
-      async (): Promise<SmokeTestResult> => {
+      async (): Promise<SmokeCheckResult> => {
         totalAttempts++;
-        return executeSingleSmokeTest(config, totalAttempts);
+
+        if (Date.now() >= deadline) {
+          throw new ActionError(ErrorCode.SMOKE_TEST_TIMEOUT, 'Deadline exceeded');
+        }
+
+        return executeSingleFetch(check, totalAttempts);
       },
-      config.retries,
-      2000, // initial delay: 2s
-      'Smoke test',
+      retries,
+      retryIntervalMs,
+      `smoke:${check.name}`,
     );
     return result;
   } catch (err) {
-    // All retries exhausted
     const errorMessage = err instanceof Error ? err.message : String(err);
-    core.error(`❌ Smoke test failed after ${totalAttempts} attempt(s): ${errorMessage}`);
+    core.error(`[smoke-test] Check "${check.name}" failed after ${totalAttempts} attempt(s): ${errorMessage}`);
 
     return {
+      name: check.name,
       passed: false,
       latencyMs: 0,
       error: errorMessage,
@@ -52,23 +147,22 @@ export async function runSmokeTest(config: SmokeTestConfig): Promise<SmokeTestRe
 }
 
 /**
- * Execute a single smoke test attempt.
+ * Execute a single fetch request for a smoke check.
  */
-async function executeSingleSmokeTest(
-  config: SmokeTestConfig,
+async function executeSingleFetch(
+  check: SmokeCheckDefinition,
   attempt: number,
-): Promise<SmokeTestResult> {
+): Promise<SmokeCheckResult> {
   const startTime = Date.now();
-
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), check.timeoutMs);
 
   try {
-    const response = await fetch(config.url, {
-      method: 'GET',
+    const response = await fetch(check.url, {
+      method: check.method,
       signal: controller.signal,
       headers: {
-        'User-Agent': 'workers-release-promoter/1.0 (smoke-test)',
+        ...check.headers,
         Accept: 'text/html,application/json,*/*',
       },
     });
@@ -78,35 +172,35 @@ async function executeSingleSmokeTest(
     const body = await response.text();
 
     core.info(
-      `   Attempt ${attempt}: status=${response.status}, ` +
-        `latency=${formatDuration(latencyMs)}, ` +
-        `body=${truncate(body, 100).replace(/\n/g, ' ')}`,
+      `[smoke-test]   Attempt ${attempt}: status=${response.status}, ` +
+        `latency=${formatDuration(latencyMs)}, body=${truncate(body, 100).replace(/\n/g, ' ')}`,
     );
 
     // Check status code
-    const statusMatch = response.status === config.expectedStatus;
+    const statusMatch = response.status === check.expectedStatus;
     if (!statusMatch) {
       throw new ActionError(
         ErrorCode.SMOKE_TEST_FAILED,
-        `Expected status ${config.expectedStatus}, got ${response.status}`,
+        `Expected status ${check.expectedStatus}, got ${response.status}`,
       );
     }
 
     // Check body contains (if configured)
     let bodyMatch: boolean | undefined;
-    if (config.expectedBodyContains) {
-      bodyMatch = body.includes(config.expectedBodyContains);
+    if (check.expectedBodyIncludes) {
+      bodyMatch = body.includes(check.expectedBodyIncludes);
       if (!bodyMatch) {
         throw new ActionError(
           ErrorCode.SMOKE_TEST_FAILED,
-          `Response body does not contain expected string "${truncate(config.expectedBodyContains, 50)}"`,
+          `Response body does not contain expected string "${truncate(check.expectedBodyIncludes, 50)}"`,
         );
       }
     }
 
-    core.info(`   ✅ Smoke test passed (attempt ${attempt}, ${formatDuration(latencyMs)})`);
+    core.info(`[smoke-test]   PASS (attempt ${attempt}, ${formatDuration(latencyMs)})`);
 
     return {
+      name: check.name,
       passed: true,
       statusCode: response.status,
       bodyMatch,
@@ -116,23 +210,55 @@ async function executeSingleSmokeTest(
     };
   } catch (err) {
     clearTimeout(timeoutId);
-    const latencyMs = Date.now() - startTime;
 
     if (err instanceof ActionError) throw err;
 
-    // Handle timeout specifically
     if (err instanceof Error && err.name === 'AbortError') {
       throw new ActionError(
         ErrorCode.SMOKE_TEST_TIMEOUT,
-        `Smoke test timed out after ${formatDuration(config.timeoutMs)}`,
+        `Smoke test timed out after ${formatDuration(check.timeoutMs)}`,
         err,
       );
     }
 
     throw new ActionError(
       ErrorCode.SMOKE_TEST_FAILED,
-      `Smoke test request failed: ${err instanceof Error ? err.message : String(err)} (${formatDuration(latencyMs)})`,
+      `Smoke test request failed: ${err instanceof Error ? err.message : String(err)}`,
       err,
     );
+  }
+}
+
+/**
+ * Run a custom smoke test command via subprocess.
+ */
+async function runCustomCommand(
+  command: string,
+): Promise<{ success: boolean; output: string; error?: string }> {
+  try {
+    const execaMod = await import('execa');
+    const execa = execaMod.default ?? execaMod;
+    const result = await execa('sh', ['-c', command], {
+      reject: false,
+      timeout: 120_000,
+    });
+
+    const output = `${result.stdout}\n${result.stderr}`.trim();
+
+    if (result.exitCode !== 0) {
+      return {
+        success: false,
+        output,
+        error: `Command exited with code ${result.exitCode}: ${result.stderr || result.stdout}`,
+      };
+    }
+
+    return { success: true, output };
+  } catch (err) {
+    return {
+      success: false,
+      output: '',
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

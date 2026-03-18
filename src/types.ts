@@ -28,6 +28,7 @@ export enum ErrorCode {
   // Smoke tests
   SMOKE_TEST_FAILED = 'SMOKE_TEST_FAILED',
   SMOKE_TEST_TIMEOUT = 'SMOKE_TEST_TIMEOUT',
+  SMOKE_COMMAND_FAILED = 'SMOKE_COMMAND_FAILED',
 
   // Inputs
   INVALID_INPUT = 'INVALID_INPUT',
@@ -63,13 +64,55 @@ export interface CloudflareAuth {
   accountId: string;
 }
 
-export interface SmokeTestConfig {
+/**
+ * Individual smoke check definition.
+ * Supports per-check configuration for advanced teams.
+ */
+export interface SmokeCheckDefinition {
+  /** Human-readable name for this check */
+  name: string;
+
+  /** URL to check */
   url: string;
+
+  /** HTTP method (defaults to GET) */
+  method: string;
+
+  /** Additional headers to send */
+  headers: Record<string, string>;
+
+  /** Expected HTTP status code */
   expectedStatus: number;
-  expectedBodyContains?: string;
+
+  /** String that response body must contain */
+  expectedBodyIncludes?: string;
+
+  /** Per-check timeout in milliseconds */
   timeoutMs: number;
-  retries: number;
 }
+
+export interface SmokeTestConfig {
+  /** Individual checks to run */
+  checks: SmokeCheckDefinition[];
+
+  /** Number of retry attempts per check */
+  retries: number;
+
+  /** Interval between retry attempts in ms */
+  retryIntervalMs: number;
+
+  /** Total deadline for all smoke tests in ms */
+  deadlineMs: number;
+
+  /** Whether smoke tests are required to proceed */
+  required: boolean;
+
+  /** Optional custom command to run instead of / in addition to fetch checks */
+  customCommand?: string;
+}
+
+/** Promotion strategy */
+export type PromotionStrategy = 'immediate' | 'gradual' | 'staging-only';
 
 export interface ActionInputs {
   /** Cloudflare authentication bundle */
@@ -89,6 +132,15 @@ export interface ActionInputs {
 
   /** Rollout percentages for gradual deployment */
   rolloutSteps: number[];
+
+  /** Promotion strategy */
+  promotionStrategy: PromotionStrategy;
+
+  /** Seconds to wait between gradual rollout steps */
+  gradualStepWaitSeconds: number;
+
+  /** Whether to run smoke tests after each gradual step */
+  postStepSmokeTests: boolean;
 
   /** Validate only, don't deploy */
   dryRun: boolean;
@@ -146,9 +198,12 @@ export type DeploymentLifecycle =
   | 'auth_ready'
   | 'candidate_deploy_started'
   | 'candidate_deployed'
+  | 'candidate_verified'
+  | 'candidate_verified_only'
   | 'smoke_tests_running'
   | 'promotion_in_progress'
   | 'promoted'
+  | 'post_promotion_verified'
   | 'rollback_in_progress'
   | 'rolled_back'
   | 'failed';
@@ -239,14 +294,18 @@ export interface RollbackResult {
 // Smoke Tests
 // ─────────────────────────────────────────────────────────
 
-export interface SmokeTestResult {
-  /** Whether the smoke test passed */
+/** Result for a single smoke check */
+export interface SmokeCheckResult {
+  /** Check name */
+  name: string;
+
+  /** Whether this check passed */
   passed: boolean;
 
   /** HTTP status code received */
   statusCode?: number;
 
-  /** Whether the expected body was found */
+  /** Whether the expected body substring was found */
   bodyMatch?: boolean;
 
   /** Latency in milliseconds */
@@ -262,6 +321,36 @@ export interface SmokeTestResult {
   attempts: number;
 }
 
+/** Result for the full smoke test suite */
+export interface SmokeTestResult {
+  /** Overall pass/fail/skipped */
+  status: 'passed' | 'failed' | 'skipped';
+
+  /** Whether the smoke test passed */
+  passed: boolean;
+
+  /** Per-check results */
+  checks: SmokeCheckResult[];
+
+  /** Custom command output (if used) */
+  rawCommandOutput?: string;
+
+  /** ISO-8601 start timestamp */
+  startedAt: string;
+
+  /** ISO-8601 finish timestamp */
+  finishedAt: string;
+
+  /** Total duration in milliseconds */
+  durationMs: number;
+
+  /** Overall failure reason */
+  failureReason?: string;
+
+  /** Verification phase: candidate or post-promotion */
+  phase: 'candidate' | 'post-promotion';
+}
+
 // ─────────────────────────────────────────────────────────
 // Promotion
 // ─────────────────────────────────────────────────────────
@@ -272,6 +361,7 @@ export type PromotionState =
   | 'smoke-testing'
   | 'promoting'
   | 'complete'
+  | 'staging-only'
   | 'rolled-back'
   | 'failed';
 
@@ -287,9 +377,29 @@ export interface LifecycleTracker {
   history: Array<{ state: DeploymentLifecycle; timestamp: string }>;
 }
 
+/**
+ * A single step in a promotion plan.
+ */
+export interface PromotionStep {
+  /** Target traffic percentage */
+  percent: number;
+
+  /** Seconds to pause after this step before verification */
+  pauseAfterSeconds: number;
+
+  /** Whether to run smoke tests after this step */
+  requiresPostStepSmoke: boolean;
+
+  /** Human-readable label */
+  label: string;
+}
+
 export interface PromotionPlan {
-  /** Ordered rollout percentage steps */
-  steps: number[];
+  /** Promotion strategy in use */
+  strategy: PromotionStrategy;
+
+  /** Ordered promotion steps */
+  steps: PromotionStep[];
 
   /** Whether smoke tests are enabled between steps */
   smokeTestEnabled: boolean;
@@ -323,6 +433,12 @@ export interface PromotionResult {
   /** Deployment lifecycle tracker */
   lifecycle?: LifecycleTracker;
 
+  /** Candidate smoke test result */
+  candidateSmokeResult?: SmokeTestResult;
+
+  /** Post-promotion smoke test result */
+  postPromotionSmokeResult?: SmokeTestResult;
+
   /** Timestamp when promotion started */
   startedAt: string;
 
@@ -355,6 +471,9 @@ export interface ReleaseNotesSection {
 
   /** Promotion result */
   promotionResult: string;
+
+  /** Promotion strategy used */
+  promotionStrategy?: string;
 
   /** Whether rollback was triggered */
   rollbackTriggered: boolean;

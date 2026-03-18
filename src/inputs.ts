@@ -7,6 +7,8 @@ import {
   type ActionInputs,
   type CloudflareAuth,
   type SmokeTestConfig,
+  type SmokeCheckDefinition,
+  type PromotionStrategy,
   ActionError,
   ErrorCode,
 } from './types';
@@ -41,7 +43,6 @@ function resolveAuth(): CloudflareAuth {
     );
   }
 
-  // Mask secrets so they never appear in logs
   maskSecret(apiToken);
   maskSecret(accountId);
 
@@ -50,32 +51,70 @@ function resolveAuth(): CloudflareAuth {
 
 /**
  * Resolve smoke test configuration from inputs.
- * Returns undefined if no smoke-test-url is provided (smoke testing disabled).
+ * Returns undefined if no smoke-test-url is provided and no custom command.
  */
 function resolveSmokeTest(): SmokeTestConfig | undefined {
   const url = core.getInput('smoke-test-url', { required: false });
-  if (!url) return undefined;
+  const customCommand = core.getInput('smoke-test-command', { required: false }) || undefined;
+  const requiredInput = core.getInput('smoke-test-required', { required: false }) || 'true';
+  const required = requiredInput.toLowerCase() !== 'false';
 
-  const expectedStatus = parseInt(
-    core.getInput('smoke-test-expected-status') || '200',
-    10,
-  );
-  if (isNaN(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) {
-    throw new ActionError(
-      ErrorCode.INVALID_INPUT,
-      `Invalid smoke-test-expected-status: must be a valid HTTP status code (100-599).`,
+  if (!url && !customCommand) return undefined;
+
+  const checks: SmokeCheckDefinition[] = [];
+
+  if (url) {
+    const expectedStatus = parseInt(
+      core.getInput('smoke-test-expected-status') || '200',
+      10,
     );
-  }
+    if (isNaN(expectedStatus) || expectedStatus < 100 || expectedStatus > 599) {
+      throw new ActionError(
+        ErrorCode.INVALID_INPUT,
+        'Invalid smoke-test-expected-status: must be a valid HTTP status code (100-599).',
+      );
+    }
 
-  const expectedBodyContains =
-    core.getInput('smoke-test-expected-body-contains', { required: false }) || undefined;
+    const expectedBodyIncludes =
+      core.getInput('smoke-test-expected-body-contains', { required: false }) || undefined;
 
-  const timeoutMs = parseInt(core.getInput('smoke-test-timeout') || '10000', 10);
-  if (isNaN(timeoutMs) || timeoutMs < 1000) {
-    throw new ActionError(
-      ErrorCode.INVALID_INPUT,
-      'Invalid smoke-test-timeout: must be at least 1000 (1 second).',
-    );
+    const timeoutMs = parseInt(core.getInput('smoke-test-timeout') || '10000', 10);
+    if (isNaN(timeoutMs) || timeoutMs < 1000) {
+      throw new ActionError(
+        ErrorCode.INVALID_INPUT,
+        'Invalid smoke-test-timeout: must be at least 1000 (1 second).',
+      );
+    }
+
+    // Build primary check
+    checks.push({
+      name: 'primary',
+      url,
+      method: 'GET',
+      headers: { 'User-Agent': 'workers-release-promoter/1.0 (smoke-test)' },
+      expectedStatus,
+      expectedBodyIncludes,
+      timeoutMs,
+    });
+
+    // Parse additional paths if provided
+    const additionalPaths = core.getInput('smoke-test-paths', { required: false });
+    if (additionalPaths) {
+      const baseUrl = new URL(url);
+      const paths = additionalPaths.split(',').map((p) => p.trim()).filter(Boolean);
+      for (const path of paths) {
+        const checkUrl = new URL(path, baseUrl.origin).toString();
+        checks.push({
+          name: path,
+          url: checkUrl,
+          method: 'GET',
+          headers: { 'User-Agent': 'workers-release-promoter/1.0 (smoke-test)' },
+          expectedStatus,
+          expectedBodyIncludes: undefined,
+          timeoutMs,
+        });
+      }
+    }
   }
 
   const retries = parseInt(core.getInput('smoke-test-retries') || '3', 10);
@@ -86,12 +125,22 @@ function resolveSmokeTest(): SmokeTestConfig | undefined {
     );
   }
 
+  const retryIntervalMs = parseInt(
+    core.getInput('smoke-test-retry-interval') || '2000',
+    10,
+  );
+  const deadlineMs = parseInt(
+    core.getInput('smoke-test-deadline') || '120000',
+    10,
+  );
+
   return {
-    url,
-    expectedStatus,
-    expectedBodyContains,
-    timeoutMs,
+    checks,
     retries,
+    retryIntervalMs,
+    deadlineMs,
+    required,
+    customCommand,
   };
 }
 
@@ -100,11 +149,11 @@ function resolveSmokeTest(): SmokeTestConfig | undefined {
  * Fails fast with descriptive error messages.
  */
 export function getInputs(): ActionInputs {
-  core.info('📥 Parsing action inputs…');
+  core.info('[inputs] Parsing action inputs');
 
   // Auth (fail early if missing)
   const auth = resolveAuth();
-  core.info('✅ Cloudflare authentication resolved');
+  core.info('[inputs] Cloudflare authentication resolved');
 
   // Worker configuration
   const workerName = core.getInput('worker-name', { required: false }) || undefined;
@@ -114,29 +163,61 @@ export function getInputs(): ActionInputs {
   // Smoke test
   const smokeTest = resolveSmokeTest();
   if (smokeTest) {
-    core.info(`✅ Smoke test configured: ${smokeTest.url}`);
+    core.info(`[inputs] Smoke test configured: ${smokeTest.checks.length} check(s), required=${smokeTest.required}`);
+    if (smokeTest.customCommand) {
+      core.info(`[inputs] Custom smoke command: ${smokeTest.customCommand}`);
+    }
   } else {
-    core.info('ℹ️  Smoke testing disabled (no smoke-test-url provided)');
+    core.info('[inputs] Smoke testing disabled (no URL or command provided)');
   }
 
-  // Rollout
-  const rolloutInput = core.getInput('rollout-percentage') || '100';
-  let rolloutSteps: number[];
-  try {
-    rolloutSteps = parsePercentages(rolloutInput);
-  } catch (err) {
+  // Promotion strategy
+  const strategyInput = (core.getInput('promotion-strategy') || 'immediate').toLowerCase();
+  let promotionStrategy: PromotionStrategy;
+  if (strategyInput === 'immediate' || strategyInput === 'gradual' || strategyInput === 'staging-only') {
+    promotionStrategy = strategyInput;
+  } else {
     throw new ActionError(
       ErrorCode.INVALID_INPUT,
-      `Invalid rollout-percentage: ${err instanceof Error ? err.message : String(err)}`,
+      `Invalid promotion-strategy: "${strategyInput}". Must be one of: immediate, gradual, staging-only.`,
     );
   }
-  core.info(`✅ Rollout steps: ${rolloutSteps.join('% → ')}%`);
+
+  // Rollout steps
+  let rolloutSteps: number[];
+  if (promotionStrategy === 'gradual') {
+    const rolloutInput = core.getInput('gradual-steps') || core.getInput('rollout-percentage') || '10,50,100';
+    try {
+      rolloutSteps = parsePercentages(rolloutInput);
+    } catch (err) {
+      throw new ActionError(
+        ErrorCode.INVALID_INPUT,
+        `Invalid gradual-steps: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } else if (promotionStrategy === 'staging-only') {
+    rolloutSteps = []; // No production steps
+  } else {
+    rolloutSteps = [100]; // Immediate
+  }
+
+  const gradualStepWaitSeconds = parseInt(
+    core.getInput('gradual-step-wait-seconds') || '5',
+    10,
+  );
+  const postStepSmokeTests = (core.getInput('post-step-smoke-tests') || 'true').toLowerCase() === 'true';
+
+  core.info(`[inputs] Strategy: ${promotionStrategy}`);
+  if (promotionStrategy === 'gradual') {
+    core.info(`[inputs] Rollout steps: ${rolloutSteps.join('% -> ')}%`);
+    core.info(`[inputs] Step wait: ${gradualStepWaitSeconds}s, post-step smoke: ${postStepSmokeTests}`);
+  }
 
   // Dry run
   const dryRunInput = core.getInput('dry-run') || 'false';
   const dryRun = dryRunInput.toLowerCase() === 'true';
   if (dryRun) {
-    core.info('🔍 Dry-run mode enabled — no deployments will be made');
+    core.notice('Dry-run mode enabled -- no deployments will be made');
   }
 
   // GitHub token
@@ -149,6 +230,9 @@ export function getInputs(): ActionInputs {
     environment,
     smokeTest,
     rolloutSteps,
+    promotionStrategy,
+    gradualStepWaitSeconds,
+    postStepSmokeTests,
     dryRun,
     githubToken,
   };
