@@ -1,1 +1,0 @@
-ALTER TABLE `links` ADD `consumed_at` text;
