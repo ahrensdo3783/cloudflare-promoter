@@ -1,7 +1,0 @@
-name = "workers-release-promoter-fixture"
-main = "src/index.ts"
-compatibility_date = "2026-03-18"
-workers_dev = true
-
-[observability.logs]
-enabled = true
